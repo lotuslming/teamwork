@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="TeamWork - 现代化团队协作与看板管理平台">
+    <title>TeamWork - 团队协作平台</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap"
+        rel="stylesheet">
+
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header" id="header">
+        <div class="logo">
+            <div class="logo-icon">
+                <i class="fas fa-cubes"></i>
+            </div>
+            <span>TeamWork</span>
+        </div>
+
+        <nav class="header-nav">
+            <div class="header-search" id="globalSearch">
+                <i class="fas fa-search header-search-icon"></i>
+                <input type="text" placeholder="搜索项目和卡片..." id="globalSearchInput">
+            </div>
+        </nav>
+
+        <div class="user-menu" id="userMenu">
+            <button class="btn btn-ghost btn-icon" id="aiToggleBtn" title="AI 助手">
+                <i class="fas fa-robot"></i>
+            </button>
+            <div class="settings-dropdown">
+                <button class="btn btn-ghost btn-icon" id="settingsBtn" title="设置">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <div class="settings-menu" id="settingsMenu">
+                    <div class="settings-item">
+                        <label>主题</label>
+                        <select id="themeSelect">
+                            <option value="dark">深色模式</option>
+                            <option value="light">浅色模式</option>
+                        </select>
+                    </div>
+                    <div class="settings-item">
+                        <label>字体大小</label>
+                        <select id="fontSizeSelect">
+                            <option value="small">小</option>
+                            <option value="medium" selected>中</option>
+                            <option value="large">大</option>
+                            <option value="xlarge">特大</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="user-avatar" id="userAvatar" style="background: var(--accent-primary);">
+                <span id="userInitial">U</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="logoutBtn">
+                <i class="fas fa-sign-out-alt"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main" id="mainContent">
+        <!-- Auth View -->
+        <div class="auth-container" id="authView">
+            <div class="auth-card card">
+                <div class="card-body">
+                    <div class="auth-title">
+                        <h2 id="authTitle">登录</h2>
+                        <p id="authSubtitle">欢迎回来，请登录您的账户</p>
+                    </div>
+
+                    <form class="auth-form" id="authForm">
+                        <div class="input-group" id="usernameGroup">
+                            <label for="username">用户名</label>
+                            <input type="text" id="username" name="username" placeholder="输入用户名" required>
+                        </div>
+
+                        <div class="input-group hidden" id="emailGroup">
+                            <label for="email">邮箱</label>
+                            <input type="email" id="email" name="email" placeholder="输入邮箱地址">
+                        </div>
+
+                        <div class="input-group">
+                            <label for="password">密码</label>
+                            <input type="password" id="password" name="password" placeholder="输入密码" required>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg" id="authSubmitBtn">
+                            <i class="fas fa-sign-in-alt"></i>
+                            <span>登录</span>
+                        </button>
+                    </form>
+
+                    <p class="auth-switch">
+                        <span id="authSwitchText">还没有账户？</span>
+                        <a href="#" id="authSwitchLink">立即注册</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard View -->
+        <div class="dashboard hidden" id="dashboardView">
+            <div class="dashboard-header">
+                <div class="dashboard-title">
+                    <h1>我的项目</h1>
+                    <p>管理和访问您的所有项目看板</p>
+                </div>
+                <button class="btn btn-primary" id="newProjectBtn">
+                    <i class="fas fa-plus"></i>
+                    <span>新建项目</span>
+                </button>
+            </div>
+
+            <div class="projects-grid" id="projectsGrid">
+                <!-- Projects will be rendered here -->
+            </div>
+        </div>
+
+        <!-- Kanban View -->
+        <div class="kanban-container hidden" id="kanbanView">
+            <div class="kanban-header">
+                <div class="kanban-header-left">
+                    <div class="back-btn" id="backToProjects">
+                        <i class="fas fa-arrow-left"></i>
+                        <span>返回</span>
+                    </div>
+                    <div class="kanban-title">
+                        <h2 id="projectTitle">项目名称</h2>
+                        <p id="projectDescription">项目描述</p>
+                    </div>
+                </div>
+                <div class="kanban-header-right">
+                    <button class="btn btn-secondary btn-sm" id="inviteMemberBtn">
+                        <i class="fas fa-user-plus"></i>
+                        <span>邀请成员</span>
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="manageCategoriesBtn">
+                        <i class="fas fa-tags"></i>
+                        <span>类别管理</span>
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="chatToggleBtn">
+                        <i class="fas fa-comments"></i>
+                        <span>聊天</span>
+                    </button>
+                    <button class="btn btn-ghost btn-icon" id="projectSettingsBtn">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="kanban-toolbar">
+                <div class="search-filter">
+                    <i class="fas fa-search icon"></i>
+                    <input type="text" placeholder="搜索卡片..." id="cardSearchInput">
+                    <label class="checkbox-label" title="同时搜索附件文件名">
+                        <input type="checkbox" id="includeAttachments">
+                        <span>附件</span>
+                    </label>
+                </div>
+                <div class="filter-group">
+                    <label>状态:</label>
+                    <select id="statusFilter">
+                        <option value="">全部</option>
+                        <option value="pending">待完成</option>
+                        <option value="completed">已完成</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>类别:</label>
+                    <select id="categoryFilter">
+                        <option value="">全部</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>负责人:</label>
+                    <select id="assigneeFilter">
+                        <option value="">全部</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="kanban-board" id="kanbanBoard">
+                <!-- Columns will be rendered here -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Chat Panel -->
+    <aside class="chat-panel" id="chatPanel">
+        <div class="chat-header">
+            <h4>
+                <i class="fas fa-comments"></i>
+                项目聊天室
+            </h4>
+            <button class="btn btn-ghost btn-icon" id="closeChatBtn">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <!-- Messages will be rendered here -->
+        </div>
+        <div class="typing-indicator hidden" id="typingIndicator"></div>
+        <div class="chat-input-area">
+            <div class="chat-input-row">
+                <input type="text" placeholder="输入消息..." id="chatInput">
+                <button class="btn btn-ghost btn-icon" id="chatFileBtn">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                <button class="btn btn-primary btn-icon" id="chatSendBtn">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+            <input type="file" id="chatFileInput" class="hidden">
+        </div>
+    </aside>
+
+    <!-- AI Panel -->
+    <aside class="ai-panel" id="aiPanel">
+        <div class="ai-header">
+            <h4>
+                <i class="fas fa-robot"></i>
+                AI 智能助手
+            </h4>
+            <button class="btn btn-ghost btn-icon" id="closeAiBtn">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="ai-content">
+            <div class="ai-section">
+                <h5>
+                    <i class="fas fa-cog"></i>
+                    API 配置
+                </h5>
+                <div class="mb-md">
+                    <label class="form-label">API Base URL (可选)</label>
+                    <input type="text" id="openaiApiBase" class="form-input" placeholder="https://api.openai.com/v1">
+                    <p class="text-muted text-sm" style="margin-top: 5px;">默认为 OpenAI 官方地址，使用代理或自定义模型服务时请填写。</p>
+                </div>
+                <div class="input-group mb-md">
+                    <label>OpenAI API Key</label>
+                    <input type="password" id="openaiApiKey" placeholder="sk-...">
+                </div>
+                <div class="input-group mb-md">
+                    <label>模型 (Model)</label>
+                    <input type="text" id="openaiModel" class="form-input" placeholder="gpt-3.5-turbo"
+                        value="gpt-3.5-turbo">
+                    <p class="text-muted text-sm" style="margin-top: 5px;">例如: gpt-4, claude-3-opus</p>
+                </div>
+                <button class="btn btn-secondary btn-sm" id="saveAiConfigBtn">
+                    <i class="fas fa-save"></i>
+                    保存配置
+                </button>
+            </div>
+
+            <div class="ai-section">
+                <h5>
+                    <i class="fas fa-question-circle"></i>
+                    项目问答
+                </h5>
+                <div class="ai-chat-messages" id="aiChatMessages">
+                    <div class="ai-message assistant">
+                        <p>你好！我是项目AI助手。你可以问我关于当前项目的任何问题，我会根据看板内容来回答。</p>
+                    </div>
+                </div>
+                <div class="ai-input-area">
+                    <input type="text" placeholder="输入问题..." id="aiQuestionInput">
+                    <button class="btn btn-primary btn-icon" id="aiAskBtn">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="ai-section">
+                <h5>
+                    <i class="fas fa-file-alt"></i>
+                    内容总结
+                </h5>
+                <p class="text-muted" style="font-size: 0.85rem; margin-bottom: var(--space-md);">
+                    选择多个卡片，AI将帮你总结为文档
+                </p>
+                <div class="card-select-list" id="cardSelectList">
+                    <!-- Cards checkboxes will be rendered here -->
+                </div>
+                <button class="btn btn-secondary" id="summarizeBtn">
+                    <i class="fas fa-magic"></i>
+                    生成总结文档
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Modals -->
+
+    <!-- New Project Modal -->
+    <div class="modal-overlay" id="newProjectModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>新建项目</h3>
+                <button class="modal-close" data-close="newProjectModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="newProjectForm">
+                    <div class="input-group mb-md">
+                        <label for="projectName">项目名称 *</label>
+                        <input type="text" id="projectName" placeholder="输入项目名称" required>
+                    </div>
+                    <div class="input-group">
+                        <label for="projectDesc">项目描述</label>
+                        <textarea id="projectDesc" placeholder="简要描述项目内容和目标"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-close="newProjectModal">取消</button>
+                <button class="btn btn-primary" id="createProjectBtn">
+                    <i class="fas fa-plus"></i>
+                    创建项目
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Card Detail Modal -->
+    <div class="modal-overlay card-detail-modal" id="cardDetailModal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <input type="text" id="cardTitleInput" class="input" placeholder="卡片标题"
+                    style="font-size: 1.2rem; font-weight: 600; background: transparent; border: none; padding: 0;">
+                <div class="flex items-center gap-sm">
+                    <button class="btn btn-ghost btn-icon" id="toggleCompleteBtn" title="标记完成">
+                        <i class="far fa-check-circle"></i>
+                    </button>
+                    <button class="btn btn-danger btn-sm" id="deleteCardBtn">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    <button class="modal-close" data-close="cardDetailModal">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="card-detail-content">
+                    <div class="card-main">
+                        <!-- Content Editor -->
+                        <div class="content-editor">
+                            <div class="editor-tabs">
+                                <button class="editor-tab active" data-tab="edit">
+                                    <i class="fas fa-edit"></i> 编辑
+                                </button>
+                                <button class="editor-tab" data-tab="preview">
+                                    <i class="fas fa-eye"></i> 预览
+                                </button>
+                            </div>
+                            <div class="editor-content" id="editorContent">
+                                <textarea id="cardContentInput" placeholder="使用 Markdown 或 HTML 编写内容..."></textarea>
+                            </div>
+                            <div class="editor-preview hidden" id="editorPreview"></div>
+                        </div>
+
+                        <!-- Attachments -->
+                        <div class="attachments-section">
+                            <div class="attachments-header">
+                                <h4>
+                                    <i class="fas fa-paperclip"></i>
+                                    附件
+                                </h4>
+                                <button class="btn btn-secondary btn-sm" id="uploadAttachmentBtn">
+                                    <i class="fas fa-upload"></i>
+                                    上传文件
+                                </button>
+                                <input type="file" id="attachmentInput" multiple class="hidden">
+                            </div>
+                            <div class="attachments-list" id="attachmentsList">
+                                <!-- Attachments will be rendered here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card-sidebar">
+                        <!-- Assignees -->
+                        <div class="sidebar-section">
+                            <h4>负责人</h4>
+                            <select id="cardAssignees" multiple style="min-height: 80px;">
+                            </select>
+                        </div>
+
+                        <!-- Categories -->
+                        <div class="sidebar-section">
+                            <h4>类别标签</h4>
+                            <div id="cardCategoriesSelect">
+                            </div>
+                        </div>
+
+                        <!-- Due Date -->
+                        <div class="sidebar-section">
+                            <h4>截止日期</h4>
+                            <input type="datetime-local" id="cardDueDate">
+                        </div>
+
+                        <!-- Content Type -->
+                        <div class="sidebar-section">
+                            <h4>内容格式</h4>
+                            <select id="cardContentType">
+                                <option value="markdown">Markdown</option>
+                                <option value="html">HTML</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-close="cardDetailModal">关闭</button>
+                <button class="btn btn-primary" id="saveCardBtn">
+                    <i class="fas fa-save"></i>
+                    保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Card Modal -->
+    <div class="modal-overlay" id="newCardModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>新建卡片</h3>
+                <button class="modal-close" data-close="newCardModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="newCardForm">
+                    <div class="input-group mb-md">
+                        <label for="newCardTitle">卡片标题 *</label>
+                        <input type="text" id="newCardTitle" placeholder="输入卡片标题" required>
+                    </div>
+                    <div class="input-group">
+                        <label for="newCardColumn">所属列</label>
+                        <select id="newCardColumn">
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-close="newCardModal">取消</button>
+                <button class="btn btn-primary" id="createCardBtn">
+                    <i class="fas fa-plus"></i>
+                    创建卡片
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invite Member Modal -->
+    <div class="modal-overlay" id="inviteMemberModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>邀请成员</h3>
+                <button class="modal-close" data-close="inviteMemberModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group mb-md">
+                    <label for="inviteUsername">用户名</label>
+                    <input type="text" id="inviteUsername" placeholder="输入要邀请的用户名">
+                </div>
+                <div id="membersList">
+                    <h4 style="margin-bottom: var(--space-md);">当前成员</h4>
+                    <div id="currentMembers"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-close="inviteMemberModal">取消</button>
+                <button class="btn btn-primary" id="sendInviteBtn">
+                    <i class="fas fa-paper-plane"></i>
+                    发送邀请
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Category Manager Modal -->
+    <div class="modal-overlay" id="categoryModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>类别管理</h3>
+                <button class="modal-close" data-close="categoryModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="flex gap-sm mb-md">
+                    <input type="text" id="newCategoryName" placeholder="新类别名称" style="flex: 1;">
+                    <input type="color" id="newCategoryColor" value="#00d4ff" style="width: 50px; padding: 4px;">
+                    <button class="btn btn-primary btn-sm" id="addCategoryBtn">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+                <div id="categoriesList">
+                    <!-- Categories will be rendered here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Editor Modal -->
+    <div class="modal-overlay file-editor-modal" id="fileEditorModal">
+        <div class="modal modal-xl">
+            <div class="modal-header">
+                <h3 id="fileEditorTitle">文件编辑</h3>
+                <button class="modal-close" data-close="fileEditorModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 0; height: 60vh;">
+                <div class="file-editor">
+                    <div class="file-editor-toolbar">
+                        <span id="fileTypeBadge" class="category-tag"
+                            style="background: var(--accent-primary);">TEXT</span>
+                        <div class="flex gap-sm">
+                            <button class="btn btn-secondary btn-sm" id="downloadFileBtn">
+                                <i class="fas fa-download"></i>
+                                下载
+                            </button>
+                            <button class="btn btn-primary btn-sm" id="saveFileBtn">
+                                <i class="fas fa-save"></i>
+                                保存
+                            </button>
+                        </div>
+                    </div>
+                    <div class="file-editor-content" id="fileEditorContent">
+                        <!-- File content will be rendered here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Summary Result Modal -->
+    <div class="modal-overlay" id="summaryModal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3>AI 总结文档</h3>
+                <button class="modal-close" data-close="summaryModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="editor-preview" id="summaryContent">
+                    <!-- Summary will be rendered here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="copySummaryBtn">
+                    <i class="fas fa-copy"></i>
+                    复制
+                </button>
+                <button class="btn btn-primary" data-close="summaryModal">
+                    关闭
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- OnlyOffice Editor Modal -->
+    <div class="modal-overlay onlyoffice-modal" id="onlyofficeModal">
+        <div class="modal modal-fullscreen">
+            <div class="modal-header">
+                <h3 id="onlyofficeTitle">文档编辑</h3>
+                <div class="flex gap-sm" style="align-items: center;">
+                    <button class="btn btn-primary btn-sm" id="saveVersionBtn">
+                        <i class="fas fa-save"></i>
+                        保存版本
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="versionHistoryBtn">
+                        <i class="fas fa-history"></i>
+                        版本历史
+                    </button>
+                    <button class="modal-close" data-close="onlyofficeModal">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body" style="padding: 0; height: calc(100vh - 120px);">
+                <div id="onlyofficeEditor" style="width: 100%; height: 100%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Version History Modal -->
+    <div class="modal-overlay" id="versionHistoryModal">
+        <div class="modal modal-md">
+            <div class="modal-header">
+                <h3>版本历史</h3>
+                <button class="modal-close" data-close="versionHistoryModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="versionHistoryList" class="version-history-list">
+                    <p class="text-center text-muted">加载中...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Socket.io -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+
+    <!-- Marked.js for Markdown -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.1.1/marked.min.js"></script>
+
+    <!-- OnlyOffice API (loaded dynamically based on config) -->
+    <script>
+        // OnlyOffice API URL will be set dynamically
+        window.ONLYOFFICE_URL = '';
+    </script>
+
+    <!-- Column Manager Modal -->
+    <div class="modal-overlay" id="columnManagerModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-columns"></i> 管理看板列</h3>
+                <button class="modal-close" onclick="closeModal('columnManagerModal')"><i
+                        class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary mb-3">拖拽调整顺序，修改名称或删除列。</p>
+                <div id="columnList" class="column-list">
+                    <!-- Columns rendered here -->
+                </div>
+                <div class="add-column-form" style="margin-top: 20px; display: flex; gap: 10px;">
+                    <input type="text" id="newColumnName" placeholder="新列名称" class="input">
+                    <button class="btn btn-primary" onclick="addColumnItem()">
+                        <i class="fas fa-plus"></i> 添加
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('columnManagerModal')">取消</button>
+                <button class="btn btn-primary" onclick="saveColumns()">保存更改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App Script -->
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>
