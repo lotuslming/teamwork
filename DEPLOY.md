@@ -2,6 +2,8 @@
 
 A collaborative Kanban board application with OnlyOffice integration.
 
+For air-gapped or intranet deployment, including local AI service and OnlyOffice configuration closure, see `docs/OFFLINE_DEPLOY.md`.
+
 ## Quick Deployment
 
 ### Option 1: Basic Deployment (No OnlyOffice)

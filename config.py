@@ -9,6 +9,7 @@ class Config:
     UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max file size
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY') or ''
+    OPENAI_API_BASE = os.environ.get('OPENAI_API_BASE') or ''
     OPENAI_MODEL = os.environ.get('OPENAI_MODEL') or 'gpt-3.5-turbo'
     
     # OnlyOffice Document Server settings

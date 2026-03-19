@@ -232,6 +232,7 @@ ONLYOFFICE_JWT_SECRET=$ONLYOFFICE_SECRET
 INTERNAL_URL=http://172.17.0.1:$FLASK_PORT
 
 # Optional: OpenAI API (for AI features)
+# OPENAI_API_BASE=http://127.0.0.1:11434/v1
 # OPENAI_API_KEY=your-api-key-here
 # OPENAI_MODEL=gpt-3.5-turbo
 

@@ -1,0 +1,6 @@
+[0;32m[2026-03-20 00:11:33][0m Starting deployment in: /home/parallels/Desktop/teamwork
+[0;32m[2026-03-20 00:11:33][0m OnlyOffice: true | Production: true | Docker: false
+[0;32m[2026-03-20 00:11:33][0m Step 1: Checking system requirements...
+[1;33m[WARNING][0m pip3 not found, will try to install.
+[0;32m[2026-03-20 00:11:33][0m System requirements check passed.
+[0;32m[2026-03-20 00:11:33][0m Step 2: Installing system dependencies...

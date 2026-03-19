@@ -9,8 +9,148 @@ const state = {
     currentCard: null,
     currentAttachment: null,
     socket: null,
-    isLogin: true
+    isLogin: true,
+    chatPollTimer: null,
+    chatMessages: [],
+    activeProjectQuery: ''
 };
+
+const ICON_ALIASES = {
+    'sign-in-alt': 'log-in',
+    'sign-out-alt': 'log-out',
+    'clipboard-list': 'board',
+    'plus-circle': 'plus',
+    'paperclip': 'attachment',
+    'paper-plane': 'send',
+    'question-circle': 'help',
+    'file-alt': 'file-text',
+    'file-word': 'file',
+    'file-excel': 'file',
+    'file-powerpoint': 'file',
+    'file-pdf': 'file',
+    'file-image': 'file',
+    'clock': 'time',
+    'history': 'time',
+    'columns': 'columns',
+    'grip-vertical': 'drag',
+    'arrow-left': 'arrow-left',
+    'arrow-up': 'arrow-up',
+    'arrow-down': 'arrow-down',
+    'ellipsis-v': 'more',
+    'times': 'close',
+    'cog': 'settings',
+    'robot': 'spark',
+    'magic': 'spark',
+    'comments': 'chat',
+    'search': 'search',
+    'users': 'users',
+    'user': 'user',
+    'user-plus': 'user-plus',
+    'plus': 'plus',
+    'save': 'save',
+    'copy': 'copy',
+    'upload': 'upload',
+    'download': 'download',
+    'undo': 'undo',
+    'eye': 'eye',
+    'edit': 'edit',
+    'trash': 'trash',
+    'tags': 'tag',
+    'tag': 'tag',
+    'check-circle': 'check-circle',
+    'spinner': 'spinner',
+    'times-circle': 'close',
+    'exclamation-circle': 'info',
+    'info-circle': 'info'
+};
+
+const SVG_ICONS = {
+    board: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="2"></rect><rect x="14" y="4" width="7" height="9" rx="2"></rect><rect x="14" y="15" width="7" height="5" rx="2"></rect></svg>',
+    attachment: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12.5l6.2-6.2a3.5 3.5 0 1 1 5 5L10.8 19.7a5 5 0 1 1-7.1-7.1l8.5-8.5"></path></svg>',
+    send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5L21 3l-4.8 18-4.2-6.3L3 11.5z"></path><path d="M21 3L11.8 14.7"></path></svg>',
+    help: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2.3-2.5 4"></path><circle cx="12" cy="17" r="1"></circle></svg>',
+    file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path></svg>',
+    'file-text': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6M10 16h6"></path></svg>',
+    time: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>',
+    columns: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="5" height="14" rx="1.5"></rect><rect x="10" y="5" width="5" height="14" rx="1.5"></rect><rect x="17" y="5" width="4" height="14" rx="1.5"></rect></svg>',
+    drag: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="7" r="1.3"></circle><circle cx="15" cy="7" r="1.3"></circle><circle cx="9" cy="12" r="1.3"></circle><circle cx="15" cy="12" r="1.3"></circle><circle cx="9" cy="17" r="1.3"></circle><circle cx="15" cy="17" r="1.3"></circle></svg>',
+    'arrow-left': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"></path><path d="M11 6l-6 6 6 6"></path></svg>',
+    'arrow-up': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"></path><path d="M6 11l6-6 6 6"></path></svg>',
+    'arrow-down': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"></path><path d="M18 13l-6 6-6-6"></path></svg>',
+    more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="12" cy="19" r="1.5"></circle></svg>',
+    close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+    settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.2a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.2a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.2a1 1 0 0 0 .7.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.2a1 1 0 0 0-.9.7Z"></path></svg>',
+    spark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"></path><path d="M19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16z"></path><path d="M5 15l.6 1.4L7 17l-1.4.6L5 19l-.6-1.4L3 17l1.4-.6L5 15z"></path></svg>',
+    chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18l-3 3V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6z"></path><path d="M8 10h8M8 14h5"></path></svg>',
+    search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.2-4.2"></path></svg>',
+    users: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 19a4.5 4.5 0 0 0-9 0"></path><circle cx="12" cy="10" r="3"></circle><path d="M21 18a4 4 0 0 0-3-3.9"></path><path d="M18 7.5a2.5 2.5 0 1 1 0 5"></path></svg>',
+    user: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M5.5 19a6.5 6.5 0 0 1 13 0"></path></svg>',
+    'user-plus': '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="8" r="3.5"></circle><path d="M3.5 19a6.5 6.5 0 0 1 13 0"></path><path d="M19 8v6M16 11h6"></path></svg>',
+    plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>',
+    'log-in': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><path d="M10 17l5-5-5-5"></path><path d="M15 12H3"></path></svg>',
+    'log-out': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"></path><path d="M14 17l5-5-5-5"></path><path d="M21 12H9"></path></svg>',
+    save: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><path d="M8 4v6h8V4"></path><path d="M9 17h6"></path></svg>',
+    copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="11" rx="2"></rect><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"></path></svg>',
+    upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V5"></path><path d="M7 10l5-5 5 5"></path><path d="M5 19h14"></path></svg>',
+    download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v11"></path><path d="M17 11l-5 5-5-5"></path><path d="M5 19h14"></path></svg>',
+    undo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H4V3"></path><path d="M20 18a8 8 0 0 0-8-8H4"></path></svg>',
+    eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>',
+    edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4.5-1 9.4-9.4a2 2 0 0 0-2.8-2.8L5.7 16.2 4 20z"></path></svg>',
+    trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 13h8l1-13"></path></svg>',
+    tag: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10l-8.5 8.5a2 2 0 0 1-2.8 0L3 12.8V4h8.8L20 10z"></path><circle cx="8" cy="8" r="1.3"></circle></svg>',
+    'check-circle': '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 12.5l2.5 2.5 4.5-5"></path></svg>',
+    spinner: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 1-9 9"></path></svg>',
+    info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6"></path><circle cx="12" cy="7" r="1"></circle></svg>'
+};
+
+function hydrateIcons(root = document) {
+    root.querySelectorAll('i[class*="fa-"]').forEach((icon) => {
+        const faClass = Array.from(icon.classList).find(cls => cls.startsWith('fa-') && cls !== 'fa-spin');
+        if (!faClass) return;
+
+        const iconName = ICON_ALIASES[faClass.slice(3)] || faClass.slice(3);
+        const svg = SVG_ICONS[iconName] || SVG_ICONS.info;
+
+        icon.classList.add('svg-icon');
+        if (icon.classList.contains('fa-spin')) {
+            icon.classList.add('is-spinning');
+        }
+        icon.innerHTML = svg;
+    });
+}
+
+function observeIcons() {
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.nodeType !== 1) return;
+                if (node.matches?.('i[class*="fa-"]')) {
+                    hydrateIcons(node.parentElement || document);
+                } else if (node.querySelectorAll) {
+                    hydrateIcons(node);
+                }
+            });
+        });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+}
+
+async function renderMarkdown(content) {
+    const data = await api('/render-markdown', {
+        method: 'POST',
+        body: JSON.stringify({ content })
+    });
+    return data.html || '';
+}
+
+function updateSyncStatus(mode = 'ready', text = '本地模式') {
+    const pill = document.getElementById('syncStatus');
+    const textEl = document.getElementById('syncStatusText');
+    if (!pill || !textEl) return;
+    pill.dataset.mode = mode;
+    textEl.textContent = text;
+}
 
 // ==================== API HELPERS ====================
 const API_BASE = '/api';
@@ -188,10 +328,12 @@ authForm.addEventListener('submit', async (e) => {
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
+    stopChatPolling();
     state.token = null;
     state.user = null;
     localStorage.removeItem('token');
     showView('authView');
+    updateSyncStatus('ready', '本地模式');
     showToast('已退出登录', 'success');
 });
 
@@ -216,7 +358,26 @@ async function loadDashboard() {
 
 function renderProjects() {
     const grid = document.getElementById('projectsGrid');
-    grid.innerHTML = state.projects.map(project => `
+    const query = state.activeProjectQuery.trim().toLowerCase();
+    const projects = state.projects.filter(project => {
+        if (!query) return true;
+        return [project.name, project.description]
+            .filter(Boolean)
+            .some(value => value.toLowerCase().includes(query));
+    });
+
+    const totalUnread = state.projects.reduce((sum, project) => sum + (project.unread_count || 0), 0);
+    const memberIds = new Set();
+    state.projects.forEach(project => (project.members || []).forEach(member => memberIds.add(member.id)));
+
+    const statsProjects = document.getElementById('statsProjects');
+    const statsUnread = document.getElementById('statsUnread');
+    const statsMembers = document.getElementById('statsMembers');
+    if (statsProjects) statsProjects.textContent = state.projects.length;
+    if (statsUnread) statsUnread.textContent = totalUnread;
+    if (statsMembers) statsMembers.textContent = memberIds.size;
+
+    grid.innerHTML = projects.map(project => `
         <div class="project-card card" data-id="${project.id}">
             <div class="project-card-content">
                 <h3>
@@ -256,6 +417,8 @@ function renderProjects() {
     document.getElementById('addProjectCard').addEventListener('click', () => {
         openModal('newProjectModal');
     });
+
+    hydrateIcons(grid);
 }
 
 document.getElementById('newProjectBtn').addEventListener('click', () => {
@@ -295,6 +458,7 @@ async function loadProject(projectId) {
         state.categories = state.currentProject.categories || [];
 
         showView('kanbanView');
+        updateSyncStatus('syncing', `载入 ${state.currentProject.name}`);
         renderKanban();
         updateFilters();
         initSocket();
@@ -685,9 +849,12 @@ function renderAttachments(attachments) {
                 <div class="attachment-size">${formatFileSize(att.file_size)}</div>
             </div>
             <div class="attachment-actions">
-                <button class="btn btn-ghost btn-sm open-file-btn" title="打开">
-                    <i class="fas fa-external-link-alt"></i>
+                <button class="btn btn-ghost btn-sm open-file-btn" title="预览">
+                    <i class="fas fa-eye"></i>
                 </button>
+                ${shouldUseOnlyOffice(att.file_type) ? `<button class="btn btn-ghost btn-sm onlyoffice-btn" title="协同编辑 (OnlyOffice)">
+                    <i class="fas fa-users"></i>
+                </button>` : ''}
                 <button class="btn btn-ghost btn-sm download-file-btn" title="下载">
                     <i class="fas fa-download"></i>
                 </button>
@@ -707,6 +874,15 @@ function renderAttachments(attachments) {
             e.stopPropagation();
             openFileEditor(att);
         });
+
+        // OnlyOffice button (only exists for Office file types)
+        const ooBtn = item.querySelector('.onlyoffice-btn');
+        if (ooBtn) {
+            ooBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openOnlyOfficeEditor(att);
+            });
+        }
 
         item.querySelector('.download-file-btn').addEventListener('click', (e) => {
             e.stopPropagation();
@@ -804,7 +980,7 @@ document.getElementById('deleteCardBtn').addEventListener('click', async () => {
 
 // ==================== EDITOR TABS ====================
 document.querySelectorAll('.editor-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
+    tab.addEventListener('click', async () => {
         document.querySelectorAll('.editor-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
 
@@ -817,7 +993,7 @@ document.querySelectorAll('.editor-tab').forEach(tab => {
             const contentType = document.getElementById('cardContentType').value;
 
             if (contentType === 'markdown') {
-                preview.innerHTML = marked.parse(content);
+                preview.innerHTML = await renderMarkdown(content);
             } else {
                 preview.innerHTML = content;
             }
@@ -895,15 +1071,15 @@ function shouldUseOnlyOffice(fileType) {
 async function openFileEditor(attachment) {
     state.currentAttachment = attachment;
 
-    // Route Word, Excel, PPT to OnlyOffice editor
-    if (shouldUseOnlyOffice(attachment.file_type)) {
-        await openOnlyOfficeEditor(attachment);
-        return;
-    }
-
-    // Use built-in editor for text, markdown, and PDF
+    // Always use lightweight built-in preview (OnlyOffice available via explicit button)
     document.getElementById('fileEditorTitle').textContent = attachment.original_filename;
     document.getElementById('fileTypeBadge').textContent = attachment.file_type.toUpperCase();
+
+    // Show/hide "协同编辑" button based on file type
+    const ooBtn = document.getElementById('openInOnlyOfficeBtn');
+    if (ooBtn) {
+        ooBtn.style.display = shouldUseOnlyOffice(attachment.file_type) ? '' : 'none';
+    }
 
     const contentArea = document.getElementById('fileEditorContent');
     contentArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -923,6 +1099,20 @@ async function openFileEditor(attachment) {
                     `<div class="pdf-page"><strong>第 ${i + 1} 页</strong><br>${escapeHtml(page)}</div>`
                 ).join('')
                     }</div>`;
+                break;
+
+            case 'word':
+                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea">${escapeHtml(data.content)}</textarea>`;
+                break;
+
+            case 'excel':
+                renderSpreadsheet(contentArea, data.content);
+                break;
+
+            case 'powerpoint':
+                contentArea.innerHTML = data.content.map((slide, i) =>
+                    `<div class="pdf-page"><h3>幻灯片 ${i + 1}</h3><pre>${escapeHtml(slide)}</pre></div>`
+                ).join('');
                 break;
 
             default:
@@ -1242,6 +1432,14 @@ document.getElementById('downloadFileBtn').addEventListener('click', () => {
     }
 });
 
+// "协同编辑" button in preview modal — opens OnlyOffice for the current attachment
+document.getElementById('openInOnlyOfficeBtn')?.addEventListener('click', async () => {
+    if (state.currentAttachment) {
+        closeModal('fileEditorModal');
+        await openOnlyOfficeEditor(state.currentAttachment);
+    }
+});
+
 // ==================== CATEGORIES ====================
 document.getElementById('manageCategoriesBtn').addEventListener('click', () => {
     renderCategoriesList();
@@ -1395,53 +1593,64 @@ document.getElementById('sendInviteBtn').addEventListener('click', async () => {
 
 // ==================== CHAT ====================
 function initSocket() {
-    if (state.socket) {
-        state.socket.disconnect();
-    }
-
-    state.socket = io();
-
-    state.socket.on('connect', () => {
-        state.socket.emit('join', {
-            project_id: state.currentProject.id,
-            user_id: state.user.id
-        });
-    });
-
-    state.socket.on('new_message', (message) => {
-        appendChatMessage(message);
-    });
-
-    state.socket.on('user_typing', (data) => {
-        const indicator = document.getElementById('typingIndicator');
-        indicator.textContent = `${data.username} 正在输入...`;
-        indicator.classList.remove('hidden');
-
-        clearTimeout(window.typingTimeout);
-        window.typingTimeout = setTimeout(() => {
-            indicator.classList.add('hidden');
-        }, 2000);
-    });
-
+    stopChatPolling();
+    state.chatMessages = [];
+    updateSyncStatus('syncing', '消息轮询同步中');
     loadChatMessages();
+    startChatPolling();
 }
 
-async function loadChatMessages() {
+function stopChatPolling() {
+    if (state.chatPollTimer) {
+        clearInterval(state.chatPollTimer);
+        state.chatPollTimer = null;
+    }
+}
+
+function startChatPolling() {
+    stopChatPolling();
+    state.chatPollTimer = setInterval(() => {
+        loadChatMessages(false);
+    }, 4000);
+}
+
+function mergeChatMessages(messages, replace = false) {
+    const container = document.getElementById('chatMessages');
+    const knownIds = new Set(state.chatMessages.map(msg => msg.id));
+    const incoming = messages
+        .filter(msg => replace || !knownIds.has(msg.id))
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    if (replace) {
+        state.chatMessages = [...messages];
+        container.innerHTML = '';
+        messages.forEach(msg => appendChatMessage(msg, false));
+    } else if (incoming.length) {
+        state.chatMessages = [...state.chatMessages, ...incoming];
+        incoming.forEach(msg => appendChatMessage(msg));
+    }
+
+    if (replace || incoming.length) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+async function loadChatMessages(replace = true) {
     try {
         const data = await api(`/projects/${state.currentProject.id}/messages`);
-        const container = document.getElementById('chatMessages');
-        container.innerHTML = '';
-
-        data.messages.forEach(msg => appendChatMessage(msg, false));
-        container.scrollTop = container.scrollHeight;
+        mergeChatMessages(data.messages, replace);
+        updateSyncStatus('ready', '本地轮询已连接');
     } catch (err) {
         console.error('Failed to load messages:', err);
+        updateSyncStatus('error', '同步暂时不可用');
     }
 }
 
 function appendChatMessage(msg, scroll = true) {
     const container = document.getElementById('chatMessages');
     const isOwn = msg.user_id === state.user?.id;
+    const fileType = msg.file_path ? getFileTypeFromName(msg.file_name || msg.file_path) : '';
+    const isOfficeFile = shouldUseOnlyOffice(fileType);
 
     const div = document.createElement('div');
     div.className = `chat-message ${isOwn ? 'own' : ''}`;
@@ -1453,17 +1662,169 @@ function appendChatMessage(msg, scroll = true) {
             ${!isOwn ? `<div class="message-sender">${escapeHtml(msg.user?.username || '未知')}</div>` : ''}
             ${msg.content ? `<div class="message-text">${escapeHtml(msg.content)}</div>` : ''}
             ${msg.file_path ? `
-                <div class="message-file" onclick="window.open('${API_BASE}/chat/files/${msg.file_path}', '_blank')">
-                    <i class="fas fa-file"></i>
+                <div class="message-file" data-filename="${escapeHtml(msg.file_path)}" data-filetype="${fileType}">
+                    <i class="fas fa-${getFileIcon(fileType)}"></i>
                     <span>${escapeHtml(msg.file_name || '文件')}</span>
+                    ${isOfficeFile ? '<i class="fas fa-ellipsis-v chat-file-menu-trigger" title="更多选项"></i>' : ''}
                 </div>
             ` : ''}
             <div class="message-time">${formatTime(msg.created_at)}</div>
         </div>
     `;
 
+    // Bind chat file events
+    const fileEl = div.querySelector('.message-file');
+    if (fileEl) {
+        const filename = fileEl.dataset.filename;
+        const ftype = fileEl.dataset.filetype;
+
+        // Left click: lightweight preview
+        fileEl.addEventListener('click', (e) => {
+            if (e.target.closest('.chat-file-menu-trigger')) return;
+            openChatFilePreview(filename, msg.file_name || filename);
+        });
+
+        // Menu trigger (three dots) or right-click: show context menu
+        const menuTrigger = fileEl.querySelector('.chat-file-menu-trigger');
+        if (menuTrigger) {
+            menuTrigger.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showChatFileContextMenu(e, filename, ftype, msg.file_name || filename);
+            });
+        }
+
+        // Right-click context menu for all file types
+        fileEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showChatFileContextMenu(e, filename, ftype, msg.file_name || filename);
+        });
+    }
+
     container.appendChild(div);
     if (scroll) container.scrollTop = container.scrollHeight;
+}
+
+// Helper to get file type from filename
+function getFileTypeFromName(filename) {
+    if (!filename || !filename.includes('.')) return 'other';
+    const ext = filename.split('.').pop().toLowerCase();
+    if (['txt', 'md'].includes(ext)) return 'text';
+    if (['doc', 'docx'].includes(ext)) return 'word';
+    if (['xls', 'xlsx'].includes(ext)) return 'excel';
+    if (['ppt', 'pptx'].includes(ext)) return 'powerpoint';
+    if (['pdf'].includes(ext)) return 'pdf';
+    if (['png', 'jpg', 'jpeg', 'gif'].includes(ext)) return 'image';
+    return 'other';
+}
+
+// Context menu for chat files
+function showChatFileContextMenu(event, filename, fileType, displayName) {
+    // Remove existing context menu
+    const existing = document.getElementById('chatFileContextMenu');
+    if (existing) existing.remove();
+
+    const isOffice = shouldUseOnlyOffice(fileType);
+
+    const menu = document.createElement('div');
+    menu.id = 'chatFileContextMenu';
+    menu.className = 'chat-file-context-menu';
+    menu.innerHTML = `
+        <div class="context-menu-item" data-action="preview">
+            <i class="fas fa-eye"></i> 轻量预览
+        </div>
+        ${isOffice ? `
+        <div class="context-menu-item" data-action="onlyoffice">
+            <i class="fas fa-users"></i> 协同编辑 (OnlyOffice)
+        </div>` : ''}
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" data-action="download">
+            <i class="fas fa-download"></i> 下载文件
+        </div>
+    `;
+
+    // Position the menu
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    let x = event.clientX;
+    let y = event.clientY;
+    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+
+    // Handle clicks
+    menu.addEventListener('click', async (e) => {
+        const item = e.target.closest('.context-menu-item');
+        if (!item) return;
+        menu.remove();
+
+        switch (item.dataset.action) {
+            case 'preview':
+                openChatFilePreview(filename, displayName);
+                break;
+            case 'onlyoffice':
+                await openChatFileOnlyOffice(filename);
+                break;
+            case 'download':
+                window.open(`${API_BASE}/chat/files/${filename}`, '_blank');
+                break;
+        }
+    });
+
+    // Close menu on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu() {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+        }, { once: true });
+    }, 10);
+}
+
+// Lightweight preview for chat files
+async function openChatFilePreview(filename, displayName) {
+    document.getElementById('fileEditorTitle').textContent = displayName;
+    const fileType = getFileTypeFromName(filename);
+    document.getElementById('fileTypeBadge').textContent = fileType.toUpperCase();
+
+    // Hide OnlyOffice button for chat file preview (use context menu instead)
+    const ooBtn = document.getElementById('openInOnlyOfficeBtn');
+    if (ooBtn) ooBtn.style.display = 'none';
+
+    const contentArea = document.getElementById('fileEditorContent');
+    contentArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+    openModal('fileEditorModal');
+
+    try {
+        const data = await api(`/chat/files/${filename}/content`);
+
+        switch (data.type) {
+            case 'text':
+                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea" readonly>${escapeHtml(data.content)}</textarea>`;
+                break;
+            case 'word':
+                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea" readonly>${escapeHtml(data.content)}</textarea>`;
+                break;
+            case 'excel':
+                renderSpreadsheet(contentArea, data.content);
+                break;
+            case 'powerpoint':
+                contentArea.innerHTML = data.content.map((slide, i) =>
+                    `<div class="pdf-page"><h3>幻灯片 ${i + 1}</h3><pre>${escapeHtml(slide)}</pre></div>`
+                ).join('');
+                break;
+            case 'pdf':
+                contentArea.innerHTML = `<div class="pdf-viewer">${data.content.map((page, i) =>
+                    `<div class="pdf-page"><strong>第 ${i + 1} 页</strong><br>${escapeHtml(page)}</div>`
+                ).join('')}</div>`;
+                break;
+            default:
+                contentArea.innerHTML = '<p class="text-center text-muted">此文件类型不支持预览</p>';
+        }
+    } catch (err) {
+        contentArea.innerHTML = `<p class="text-center" style="color: var(--accent-danger);">${err.message}</p>`;
+    }
 }
 
 document.getElementById('chatToggleBtn').addEventListener('click', () => {
@@ -1480,13 +1841,11 @@ document.getElementById('chatInput').addEventListener('keypress', (e) => {
 });
 
 document.getElementById('chatInput').addEventListener('input', () => {
-    if (state.socket && state.currentProject) {
-        state.socket.emit('typing', {
-            project_id: state.currentProject.id,
-            user_id: state.user.id,
-            username: state.user.username
-        });
-    }
+    const indicator = document.getElementById('typingIndicator');
+    indicator.textContent = '输入完成后将自动同步到项目聊天';
+    indicator.classList.remove('hidden');
+    clearTimeout(window.typingHintTimeout);
+    window.typingHintTimeout = setTimeout(() => indicator.classList.add('hidden'), 1200);
 });
 
 async function sendChatMessage() {
@@ -1501,6 +1860,7 @@ async function sendChatMessage() {
     try {
         await apiFormData(`/projects/${state.currentProject.id}/messages`, formData);
         input.value = '';
+        await loadChatMessages(false);
     } catch (err) {
         showToast(err.message, 'error');
     }
@@ -1519,6 +1879,7 @@ document.getElementById('chatFileInput').addEventListener('change', async (e) =>
 
     try {
         await apiFormData(`/projects/${state.currentProject.id}/messages`, formData);
+        await loadChatMessages(false);
     } catch (err) {
         showToast(err.message, 'error');
     }
@@ -1585,7 +1946,7 @@ async function askAI() {
             body: JSON.stringify({ question })
         });
 
-        loadingMsg.innerHTML = `<p>${marked.parse(data.answer)}</p>`;
+        loadingMsg.innerHTML = await renderMarkdown(data.answer);
     } catch (err) {
         loadingMsg.innerHTML = `<p style="color: var(--accent-danger);">${err.message}</p>`;
     }
@@ -1622,7 +1983,7 @@ document.getElementById('summarizeBtn').addEventListener('click', async () => {
             body: JSON.stringify({ card_ids: selectedIds })
         });
 
-        summaryContent.innerHTML = marked.parse(data.summary);
+        summaryContent.innerHTML = await renderMarkdown(data.summary);
     } catch (err) {
         summaryContent.innerHTML = `<p style="color: var(--accent-danger);">${err.message}</p>`;
     }
@@ -1636,13 +1997,13 @@ document.getElementById('copySummaryBtn').addEventListener('click', () => {
 
 // ==================== NAVIGATION ====================
 document.getElementById('backToProjects').addEventListener('click', () => {
-    if (state.socket) {
-        state.socket.emit('leave', { project_id: state.currentProject.id });
-        state.socket.disconnect();
-    }
+    stopChatPolling();
+    state.chatMessages = [];
     state.currentProject = null;
     document.getElementById('chatPanel').classList.remove('open');
     document.getElementById('aiPanel').classList.remove('open');
+    document.getElementById('typingIndicator').classList.add('hidden');
+    updateSyncStatus('ready', '本地模式');
     loadDashboard();
 });
 
@@ -1768,19 +2129,50 @@ function initThemeSettings() {
 }
 
 function setTheme(theme) {
-    if (theme === 'light') {
-        document.documentElement.setAttribute('data-theme', 'light');
-    } else {
-        document.documentElement.removeAttribute('data-theme');
-    }
+    document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
+}
+
+function initSettingsMenu() {
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsMenu = document.getElementById('settingsMenu');
+    if (!settingsBtn || !settingsMenu) return;
+
+    settingsBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        settingsMenu.classList.toggle('open');
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('.settings-dropdown')) {
+            settingsMenu.classList.remove('open');
+        }
+    });
+}
+
+function initDashboardSearch() {
+    const searchInput = document.getElementById('globalSearchInput');
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', debounce((event) => {
+        state.activeProjectQuery = event.target.value || '';
+        if (!document.getElementById('dashboardView').classList.contains('hidden')) {
+            renderProjects();
+        }
+    }, 150));
 }
 
 // ==================== INIT ====================
 async function init() {
+    hydrateIcons();
+    observeIcons();
+
     // Initialize theme and font size immediately
     initThemeSettings();
     initFontSizeSettings();
+    initSettingsMenu();
+    initDashboardSearch();
+    updateSyncStatus('ready', '本地模式');
 
     if (state.token) {
         try {
@@ -1970,12 +2362,8 @@ function markProjectRead(projectId) {
 
 // ==================== CHAT FILE HELPER ====================
 async function openChatFile(filename, type) {
-    // Determine if we should use OnlyOffice
-    if (shouldUseOnlyOffice(type)) {
-        await openChatFileOnlyOffice(filename);
-    } else {
-        window.open(`${API_BASE}/chat/files/${filename}`, '_blank');
-    }
+    // Open lightweight preview by default
+    openChatFilePreview(filename, filename);
 }
 
 async function openChatFileOnlyOffice(filename) {

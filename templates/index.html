@@ -7,16 +7,6 @@
     <meta name="description" content="TeamWork - 现代化团队协作与看板管理平台">
     <title>TeamWork - 团队协作平台</title>
 
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap"
-        rel="stylesheet">
-
-    <!-- Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-
     <!-- Styles -->
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -28,13 +18,20 @@
             <div class="logo-icon">
                 <i class="fas fa-cubes"></i>
             </div>
-            <span>TeamWork</span>
+            <div class="logo-copy">
+                <span>TeamWork</span>
+                <small>本地优先团队协作平台</small>
+            </div>
         </div>
 
         <nav class="header-nav">
             <div class="header-search" id="globalSearch">
                 <i class="fas fa-search header-search-icon"></i>
                 <input type="text" placeholder="搜索项目和卡片..." id="globalSearchInput">
+            </div>
+            <div class="sync-pill" id="syncStatus">
+                <span class="sync-dot"></span>
+                <span id="syncStatusText">本地模式</span>
             </div>
         </nav>
 
@@ -78,39 +75,65 @@
     <main class="main" id="mainContent">
         <!-- Auth View -->
         <div class="auth-container" id="authView">
-            <div class="auth-card card">
-                <div class="card-body">
-                    <div class="auth-title">
-                        <h2 id="authTitle">登录</h2>
-                        <p id="authSubtitle">欢迎回来，请登录您的账户</p>
+            <div class="auth-layout">
+                <section class="auth-showcase card">
+                    <div class="card-body">
+                        <span class="eyebrow">离线可运行</span>
+                        <h1>把项目、聊天、文档和看板放到一个稳定的工作台里。</h1>
+                        <p>为本地部署和内网协作重新整理界面结构，保留任务流、文件预览、团队聊天和 AI 能力入口。</p>
+
+                        <div class="auth-showcase-grid">
+                            <div class="showcase-stat">
+                                <strong>项目看板</strong>
+                                <span>多列管理、拖拽排序、筛选检索</span>
+                            </div>
+                            <div class="showcase-stat">
+                                <strong>聊天协作</strong>
+                                <span>消息、附件、预览与轮询同步</span>
+                            </div>
+                            <div class="showcase-stat">
+                                <strong>文档处理</strong>
+                                <span>内置轻量预览，外接 OnlyOffice</span>
+                            </div>
+                        </div>
                     </div>
+                </section>
 
-                    <form class="auth-form" id="authForm">
-                        <div class="input-group" id="usernameGroup">
-                            <label for="username">用户名</label>
-                            <input type="text" id="username" name="username" placeholder="输入用户名" required>
+                <div class="auth-card card">
+                    <div class="card-body">
+                        <div class="auth-title">
+                            <span class="eyebrow">账户入口</span>
+                            <h2 id="authTitle">登录</h2>
+                            <p id="authSubtitle">欢迎回来，请登录您的账户</p>
                         </div>
 
-                        <div class="input-group hidden" id="emailGroup">
-                            <label for="email">邮箱</label>
-                            <input type="email" id="email" name="email" placeholder="输入邮箱地址">
-                        </div>
+                        <form class="auth-form" id="authForm">
+                            <div class="input-group" id="usernameGroup">
+                                <label for="username">用户名</label>
+                                <input type="text" id="username" name="username" placeholder="输入用户名" required>
+                            </div>
 
-                        <div class="input-group">
-                            <label for="password">密码</label>
-                            <input type="password" id="password" name="password" placeholder="输入密码" required>
-                        </div>
+                            <div class="input-group hidden" id="emailGroup">
+                                <label for="email">邮箱</label>
+                                <input type="email" id="email" name="email" placeholder="输入邮箱地址">
+                            </div>
 
-                        <button type="submit" class="btn btn-primary btn-lg" id="authSubmitBtn">
-                            <i class="fas fa-sign-in-alt"></i>
-                            <span>登录</span>
-                        </button>
-                    </form>
+                            <div class="input-group">
+                                <label for="password">密码</label>
+                                <input type="password" id="password" name="password" placeholder="输入密码" required>
+                            </div>
 
-                    <p class="auth-switch">
-                        <span id="authSwitchText">还没有账户？</span>
-                        <a href="#" id="authSwitchLink">立即注册</a>
-                    </p>
+                            <button type="submit" class="btn btn-primary btn-lg" id="authSubmitBtn">
+                                <i class="fas fa-sign-in-alt"></i>
+                                <span>登录</span>
+                            </button>
+                        </form>
+
+                        <p class="auth-switch">
+                            <span id="authSwitchText">还没有账户？</span>
+                            <a href="#" id="authSwitchLink">立即注册</a>
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -119,6 +142,7 @@
         <div class="dashboard hidden" id="dashboardView">
             <div class="dashboard-header">
                 <div class="dashboard-title">
+                    <span class="eyebrow">工作空间</span>
                     <h1>我的项目</h1>
                     <p>管理和访问您的所有项目看板</p>
                 </div>
@@ -127,6 +151,24 @@
                     <span>新建项目</span>
                 </button>
             </div>
+
+            <section class="dashboard-overview" id="dashboardStats">
+                <article class="overview-card">
+                    <span class="overview-label">项目总数</span>
+                    <strong id="statsProjects">0</strong>
+                    <p>当前可访问的所有项目</p>
+                </article>
+                <article class="overview-card">
+                    <span class="overview-label">未读动态</span>
+                    <strong id="statsUnread">0</strong>
+                    <p>等待查看的项目消息</p>
+                </article>
+                <article class="overview-card">
+                    <span class="overview-label">协作成员</span>
+                    <strong id="statsMembers">0</strong>
+                    <p>跨项目参与人数汇总</p>
+                </article>
+            </section>
 
             <div class="projects-grid" id="projectsGrid">
                 <!-- Projects will be rendered here -->
@@ -537,6 +579,11 @@
                         <span id="fileTypeBadge" class="category-tag"
                             style="background: var(--accent-primary);">TEXT</span>
                         <div class="flex gap-sm">
+                            <button class="btn btn-sm" id="openInOnlyOfficeBtn"
+                                style="display:none; background: var(--accent-warning); color: #fff;">
+                                <i class="fas fa-users"></i>
+                                协同编辑
+                            </button>
                             <button class="btn btn-secondary btn-sm" id="downloadFileBtn">
                                 <i class="fas fa-download"></i>
                                 下载
@@ -625,12 +672,6 @@
 
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
-
-    <!-- Socket.io -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
-
-    <!-- Marked.js for Markdown -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.1.1/marked.min.js"></script>
 
     <!-- OnlyOffice API (loaded dynamically based on config) -->
     <script>

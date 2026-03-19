@@ -11,7 +11,9 @@ from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_compress import Compress
 from werkzeug.utils import secure_filename
+from sqlalchemy.orm import joinedload, subqueryload
 import markdown
 import bleach
 
@@ -30,10 +32,22 @@ os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'chat'), exist_ok=True)
 # Initialize extensions
 db.init_app(app)
 jwt = JWTManager(app)
+Compress(app)  # Gzip compression for all responses
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# Create tables
+# Create tables and configure SQLite performance
 with app.app_context():
+    # SQLite performance: enable WAL mode for concurrent read/write
+    if 'sqlite' in app.config.get('SQLALCHEMY_DATABASE_URI', ''):
+        from sqlalchemy import event as sa_event
+        @sa_event.listens_for(db.engine, "connect")
+        def set_sqlite_pragma(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA cache_size=-8000")  # 8MB cache
+            cursor.close()
     db.create_all()
 
 # Allowed file extensions
@@ -60,6 +74,17 @@ def get_file_type(filename):
         else:
             return 'other'
     return 'other'
+
+def create_openai_client():
+    """Create an OpenAI-compatible client for cloud or local model services."""
+    from openai import OpenAI
+
+    api_key = app.config.get('OPENAI_API_KEY')
+    api_base = (app.config.get('OPENAI_API_BASE') or '').strip()
+    client_kwargs = {'api_key': api_key}
+    if api_base:
+        client_kwargs['base_url'] = api_base
+    return OpenAI(**client_kwargs)
 
 def extract_file_content(file_path, file_type, max_content_length=50000):
     """Extract text content from a file for full-text search.
@@ -199,19 +224,63 @@ def get_projects():
         (Project.owner_id == user_id) | (Project.members.contains(user))
     ).order_by(Project.updated_at.desc()).all()
     
+    # Batch: get all unread statuses in one query
+    project_ids = [p.id for p in projects]
+    unread_statuses = {
+        us.project_id: us.last_read_at
+        for us in UnreadStatus.query.filter(
+            UnreadStatus.user_id == user_id,
+            UnreadStatus.project_id.in_(project_ids)
+        ).all()
+    }
+    
+    # Batch: count unread messages per project in one aggregated query
+    from sqlalchemy import case, func
+    unread_filters = []
+    for pid in project_ids:
+        last_read = unread_statuses.get(pid, datetime.min)
+        unread_filters.append(
+            case(
+                (
+                    (ChatMessage.project_id == pid) &
+                    (ChatMessage.created_at > last_read) &
+                    (ChatMessage.user_id != user_id),
+                    1
+                ),
+                else_=0
+            )
+        )
+    
+    unread_counts = {}
+    if project_ids:
+        counts_query = db.session.query(
+            ChatMessage.project_id,
+            func.count(ChatMessage.id)
+        ).filter(
+            ChatMessage.project_id.in_(project_ids),
+            ChatMessage.user_id != user_id
+        )
+        # Apply per-project last_read filters
+        or_conditions = []
+        from sqlalchemy import and_, or_
+        for pid in project_ids:
+            last_read = unread_statuses.get(pid, datetime.min)
+            or_conditions.append(
+                and_(
+                    ChatMessage.project_id == pid,
+                    ChatMessage.created_at > last_read
+                )
+            )
+        if or_conditions:
+            counts_query = counts_query.filter(or_(*or_conditions))
+        
+        for pid, cnt in counts_query.group_by(ChatMessage.project_id).all():
+            unread_counts[pid] = cnt
+    
     result = []
     for p in projects:
         p_data = p.to_dict()
-        # Calculate unread messages
-        unread_stat = UnreadStatus.query.filter_by(user_id=user_id, project_id=p.id).first()
-        last_read = unread_stat.last_read_at if unread_stat else datetime.min
-        
-        count = ChatMessage.query.filter(
-            ChatMessage.project_id == p.id,
-            ChatMessage.created_at > last_read,
-            ChatMessage.user_id != user_id
-        ).count()
-        p_data['unread_count'] = count
+        p_data['unread_count'] = unread_counts.get(p.id, 0)
         result.append(p_data)
         
     return jsonify(result)
@@ -387,7 +456,12 @@ def get_cards(project_id):
     if not any(m.id == user_id for m in project.members):
         return jsonify({'error': '无权访问'}), 403
     
-    cards = Card.query.filter_by(project_id=project_id).order_by(Card.position).all()
+    cards = Card.query.filter_by(project_id=project_id)\
+        .options(
+            subqueryload(Card.assignees),
+            subqueryload(Card.categories),
+            subqueryload(Card.attachments)
+        ).order_by(Card.position).all()
     return jsonify([c.to_dict() for c in cards])
 
 @app.route('/api/projects/<int:project_id>/cards', methods=['POST'])
@@ -688,7 +762,7 @@ def upload_attachment(card_id):
     attachments = []
     
     for file in files:
-        if file and file.filename and allowed_file(file.filename):
+        if file and file.filename:
             original_filename = secure_filename(file.filename)
             # Generate unique filename
             ext = original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else ''
@@ -1267,8 +1341,7 @@ def ai_ask(project_id):
         return jsonify({'error': '请配置OpenAI API密钥'}), 400
     
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
+        client = create_openai_client()
         
         response = client.chat.completions.create(
             model=app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
@@ -1312,8 +1385,7 @@ def ai_summarize(project_id):
         return jsonify({'error': '请配置OpenAI API密钥'}), 400
     
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
+        client = create_openai_client()
         
         response = client.chat.completions.create(
             model=app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
@@ -1360,6 +1432,7 @@ def get_messages(project_id):
     per_page = request.args.get('per_page', 50, type=int)
     
     messages = ChatMessage.query.filter_by(project_id=project_id)\
+        .options(joinedload(ChatMessage.author))\
         .order_by(ChatMessage.created_at.desc())\
         .paginate(page=page, per_page=per_page, error_out=False)
     
@@ -1420,6 +1493,73 @@ def get_chat_file(filename):
         os.path.join(app.config['UPLOAD_FOLDER'], 'chat'),
         filename
     )
+
+@app.route('/api/chat/files/<filename>/content', methods=['GET'])
+@jwt_required()
+def get_chat_file_content(filename):
+    """Extract text content from chat files for lightweight preview"""
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'chat', filename)
+    if not os.path.exists(file_path):
+        return jsonify({'error': '文件不存在'}), 404
+    
+    file_type = get_file_type(filename)
+    
+    if file_type == 'text':
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        return jsonify({'content': content, 'type': 'text'})
+    
+    elif file_type == 'word':
+        try:
+            from docx import Document
+            doc = Document(file_path)
+            content = '\n\n'.join([para.text for para in doc.paragraphs])
+            return jsonify({'content': content, 'type': 'word'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    elif file_type == 'excel':
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, data_only=True)
+            sheets = {}
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                data = []
+                for row in ws.iter_rows(values_only=True):
+                    data.append([str(cell) if cell is not None else '' for cell in row])
+                sheets[sheet_name] = data
+            return jsonify({'content': sheets, 'type': 'excel'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    elif file_type == 'powerpoint':
+        try:
+            from pptx import Presentation
+            prs = Presentation(file_path)
+            slides = []
+            for slide in prs.slides:
+                slide_content = []
+                for shape in slide.shapes:
+                    if hasattr(shape, 'text'):
+                        slide_content.append(shape.text)
+                slides.append('\n'.join(slide_content))
+            return jsonify({'content': slides, 'type': 'powerpoint'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    elif file_type == 'pdf':
+        try:
+            from PyPDF2 import PdfReader
+            reader = PdfReader(file_path)
+            pages = []
+            for page in reader.pages:
+                pages.append(page.extract_text() or '')
+            return jsonify({'content': pages, 'type': 'pdf'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    return jsonify({'error': '不支持的文件类型'}), 400
 
 @app.route('/api/chat/files/<filename>/onlyoffice-config', methods=['GET'])
 @jwt_required()

@@ -111,10 +111,16 @@ class Card(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
-    assignees = db.relationship('User', secondary=card_assignees, back_populates='cards_assigned')
-    categories = db.relationship('Category', secondary=card_categories, back_populates='cards')
-    attachments = db.relationship('Attachment', backref='card', lazy='dynamic', cascade='all, delete-orphan')
+    # Indexes for query performance
+    __table_args__ = (
+        db.Index('ix_cards_project_position', 'project_id', 'position'),
+        db.Index('ix_cards_project_column', 'project_id', 'column'),
+    )
+    
+    # Relationships — use subquery loading to eliminate N+1 queries
+    assignees = db.relationship('User', secondary=card_assignees, back_populates='cards_assigned', lazy='subquery')
+    categories = db.relationship('Category', secondary=card_categories, back_populates='cards', lazy='subquery')
+    attachments = db.relationship('Attachment', backref='card', lazy='subquery', cascade='all, delete-orphan')
     
     def to_dict(self):
         return {
@@ -157,7 +163,7 @@ class Attachment(db.Model):
     __tablename__ = 'attachments'
     
     id = db.Column(db.Integer, primary_key=True)
-    card_id = db.Column(db.Integer, db.ForeignKey('cards.id'), nullable=False)
+    card_id = db.Column(db.Integer, db.ForeignKey('cards.id'), nullable=False, index=True)
     filename = db.Column(db.String(300), nullable=False)
     original_filename = db.Column(db.String(300), nullable=False)
     file_type = db.Column(db.String(50))
@@ -186,6 +192,12 @@ class ChatMessage(db.Model):
     file_path = db.Column(db.String(500), nullable=True)
     file_name = db.Column(db.String(300), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Index for fast message retrieval and unread counting
+    __table_args__ = (
+        db.Index('ix_chat_project_created', 'project_id', 'created_at'),
+        db.Index('ix_chat_project_user', 'project_id', 'user_id'),
+    )
     
     def to_dict(self):
         return {

@@ -14,6 +14,7 @@ markdown==3.5.1
 bleach==6.1.0
 pyjwt>=2.8.0
 requests>=2.31.0
+flask-compress>=1.14
 
 # Production WSGI Server
 gunicorn>=21.0.0
