@@ -1,4 +1,4 @@
-#!/home/ub/Desktop/teamwork/.venv/bin/python3.12
+#!/home/parallels/Desktop/teamwork/.venv/bin/python3
 
 ##############################################################################
 #
