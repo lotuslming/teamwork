@@ -36,6 +36,7 @@ class User(db.Model):
     owned_projects = db.relationship('Project', backref='owner', lazy='dynamic')
     cards_assigned = db.relationship('Card', secondary=card_assignees, back_populates='assignees')
     messages = db.relationship('ChatMessage', backref='author', lazy='dynamic')
+    library_documents = db.relationship('LibraryDocument', backref='uploaded_by', lazy='dynamic')
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -67,6 +68,8 @@ class Project(db.Model):
     cards = db.relationship('Card', backref='project', lazy='dynamic', cascade='all, delete-orphan')
     categories = db.relationship('Category', backref='project', lazy='dynamic', cascade='all, delete-orphan')
     messages = db.relationship('ChatMessage', backref='project', lazy='dynamic', cascade='all, delete-orphan')
+    library_folders = db.relationship('LibraryFolder', backref='project', lazy='dynamic', cascade='all, delete-orphan')
+    library_documents = db.relationship('LibraryDocument', backref='project', lazy='dynamic', cascade='all, delete-orphan')
     members = db.relationship('User', secondary=project_members, backref=db.backref('projects', lazy='dynamic'))
     
     def to_dict(self, include_cards=False):
@@ -159,6 +162,71 @@ class Category(db.Model):
             'color': self.color
         }
 
+class LibraryFolder(db.Model):
+    __tablename__ = 'library_folders'
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False, index=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey('library_folders.id'), nullable=True, index=True)
+    name = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    parent = db.relationship('LibraryFolder', remote_side=[id], backref=db.backref('children', lazy='dynamic', cascade='all, delete-orphan'))
+    documents = db.relationship('LibraryDocument', backref='folder', lazy='dynamic', cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.UniqueConstraint('project_id', 'parent_id', 'name', name='uq_library_folder_name'),
+        db.Index('ix_library_folder_project_parent', 'project_id', 'parent_id'),
+    )
+
+    def to_dict(self, include_children=False):
+        data = {
+            'id': self.id,
+            'project_id': self.project_id,
+            'parent_id': self.parent_id,
+            'name': self.name,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+        if include_children:
+            data['children'] = [child.to_dict(include_children=True) for child in self.children.order_by(LibraryFolder.name.asc()).all()]
+        return data
+
+class LibraryDocument(db.Model):
+    __tablename__ = 'library_documents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False, index=True)
+    folder_id = db.Column(db.Integer, db.ForeignKey('library_folders.id'), nullable=True, index=True)
+    filename = db.Column(db.String(300), nullable=False)
+    original_filename = db.Column(db.String(300), nullable=False)
+    file_type = db.Column(db.String(50))
+    file_size = db.Column(db.Integer)
+    content = db.Column(db.Text, nullable=True)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('ix_library_document_project_folder', 'project_id', 'folder_id'),
+        db.Index('ix_library_document_project_name', 'project_id', 'original_filename'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'project_id': self.project_id,
+            'folder_id': self.folder_id,
+            'filename': self.filename,
+            'original_filename': self.original_filename,
+            'file_type': self.file_type,
+            'file_size': self.file_size,
+            'uploaded_by': self.uploaded_by.to_dict() if self.uploaded_by else None,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+
 class Attachment(db.Model):
     __tablename__ = 'attachments'
     
@@ -238,4 +306,3 @@ class FileVersion(db.Model):
             'change_summary': self.change_summary,
             'created_at': self.created_at.isoformat()
         }
-

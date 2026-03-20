@@ -8,6 +8,11 @@ const state = {
     categories: [],
     currentCard: null,
     currentAttachment: null,
+    currentLibraryFolder: null,
+    libraryTree: [],
+    libraryFolders: [],
+    libraryDocuments: [],
+    activeProjectView: 'board',
     socket: null,
     isLogin: true,
     chatPollTimer: null,
@@ -62,6 +67,9 @@ const ICON_ALIASES = {
     'times-circle': 'close',
     'exclamation-circle': 'info',
     'info-circle': 'info'
+    ,
+    'file': 'file',
+    'folder': 'folder'
 };
 
 const SVG_ICONS = {
@@ -101,6 +109,8 @@ const SVG_ICONS = {
     'check-circle': '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 12.5l2.5 2.5 4.5-5"></path></svg>',
     spinner: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 1-9 9"></path></svg>',
     info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6"></path><circle cx="12" cy="7" r="1"></circle></svg>'
+    ,
+    folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"></path></svg>'
 };
 
 function hydrateIcons(root = document) {
@@ -456,10 +466,16 @@ async function loadProject(projectId) {
         state.currentProject = await api(`/projects/${projectId}`);
         state.cards = state.currentProject.cards || [];
         state.categories = state.currentProject.categories || [];
+        state.activeProjectView = 'board';
+        state.currentLibraryFolder = null;
+        state.libraryTree = [];
+        state.libraryFolders = [];
+        state.libraryDocuments = [];
 
         showView('kanbanView');
         updateSyncStatus('syncing', `载入 ${state.currentProject.name}`);
         renderKanban();
+        renderProjectViewSwitch();
         updateFilters();
         initSocket();
 
@@ -478,6 +494,44 @@ async function loadProject(projectId) {
         updateCardSelectList();
     } catch (err) {
         showToast(err.message, 'error');
+    }
+}
+
+function renderProjectViewSwitch() {
+    document.querySelectorAll('#projectViewSwitch .view-switch-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === state.activeProjectView);
+    });
+    const toggleBtn = document.getElementById('libraryToggleBtn');
+    if (toggleBtn) {
+        toggleBtn.classList.toggle('btn-primary', state.activeProjectView === 'library');
+        toggleBtn.classList.toggle('btn-secondary', state.activeProjectView !== 'library');
+        const label = toggleBtn.querySelector('span');
+        if (label) {
+            label.textContent = state.activeProjectView === 'library' ? '返回看板' : '文件库';
+        }
+    }
+}
+
+async function setProjectView(view) {
+    state.activeProjectView = view;
+    renderProjectViewSwitch();
+
+    const board = document.getElementById('kanbanBoard');
+    const library = document.getElementById('libraryWorkspace');
+
+    const cardSearchFilter = document.getElementById('cardSearchInput')?.closest('.search-filter');
+    if (cardSearchFilter) {
+        cardSearchFilter.style.display = view === 'board' ? '' : 'none';
+    }
+    document.querySelectorAll('.kanban-toolbar .filter-group').forEach(el => {
+        el.style.display = view === 'board' ? '' : 'none';
+    });
+
+    board.classList.toggle('hidden', view !== 'board');
+    library.classList.toggle('hidden', view !== 'library');
+
+    if (view === 'library') {
+        await loadLibraryWorkspace(state.currentLibraryFolder?.id || null);
     }
 }
 
@@ -540,6 +594,9 @@ function renderKanban() {
             openModal('newCardModal');
         });
     });
+
+    document.getElementById('libraryWorkspace').classList.toggle('hidden', state.activeProjectView !== 'library');
+    board.classList.toggle('hidden', state.activeProjectView !== 'board');
 }
 
 function renderCard(card) {
@@ -568,6 +625,232 @@ function renderCard(card) {
             </div>
         </div>
     `;
+}
+
+// ==================== FILE LIBRARY ====================
+async function loadLibraryWorkspace(folderId = null) {
+    if (!state.currentProject) return;
+
+    try {
+        const query = folderId ? `?folder_id=${folderId}` : '';
+        const data = await api(`/projects/${state.currentProject.id}/library${query}`);
+        state.libraryTree = data.tree || [];
+        state.currentLibraryFolder = data.current_folder || null;
+        state.libraryFolders = data.folders || [];
+        state.libraryDocuments = data.documents || [];
+        renderLibraryWorkspace(data.breadcrumbs || []);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function renderLibraryWorkspace(breadcrumbs = []) {
+    const tree = document.getElementById('libraryTree');
+    const crumbs = document.getElementById('libraryBreadcrumbs');
+    const meta = document.getElementById('libraryMeta');
+    const results = document.getElementById('libraryResults');
+
+    const rootActive = !state.currentLibraryFolder;
+    tree.innerHTML = `
+        <div class="library-tree-node">
+            <button class="library-tree-item ${rootActive ? 'active' : ''}" data-folder-root="true">
+                <i class="fas fa-folder"></i>
+                <span>根目录</span>
+            </button>
+        </div>
+        ${state.libraryTree.map(renderLibraryTreeNode).join('')}
+    `;
+
+    crumbs.innerHTML = `
+        <button class="library-breadcrumb" data-folder-root="true">根目录</button>
+        ${breadcrumbs.map(item => `<span>/</span><button class="library-breadcrumb" data-folder-id="${item.id}">${escapeHtml(item.name)}</button>`).join('')}
+    `;
+    meta.textContent = state.currentLibraryFolder ? `当前文件库：${state.currentLibraryFolder.name}` : '当前文件库：根目录';
+
+    const folderCards = state.libraryFolders.map(folder => `
+        <article class="library-item" data-folder-id="${folder.id}">
+            <div class="library-item-icon"><i class="fas fa-folder"></i></div>
+            <div>
+                <div class="library-item-name">${escapeHtml(folder.name)}</div>
+                <div class="library-item-info">子文件库 · ${formatDate(folder.updated_at)}</div>
+            </div>
+            <div class="library-item-actions">
+                <button class="btn btn-secondary btn-sm open-library-folder-btn" data-folder-id="${folder.id}">
+                    <i class="fas fa-eye"></i>
+                    打开
+                </button>
+            </div>
+        </article>
+    `);
+
+    const documentCards = state.libraryDocuments.map(document => `
+        <article class="library-item" data-document-id="${document.id}">
+            <div class="library-item-icon"><i class="fas fa-${getFileIcon(document.file_type)}"></i></div>
+            <div>
+                <div class="library-item-name">${escapeHtml(document.original_filename)}</div>
+                <div class="library-item-info">${formatFileSize(document.file_size)} · ${formatDate(document.updated_at)}</div>
+            </div>
+            <div class="library-item-actions">
+                <button class="btn btn-secondary btn-sm preview-library-document-btn" data-document-id="${document.id}">
+                    <i class="fas fa-eye"></i>
+                    查阅
+                </button>
+                ${shouldUseOnlyOffice(document.file_type) ? `<button class="btn btn-secondary btn-sm onlyoffice-library-document-btn" data-document-id="${document.id}">
+                    <i class="fas fa-users"></i>
+                    Office
+                </button>` : ''}
+                <button class="btn btn-ghost btn-sm download-library-document-btn" data-document-id="${document.id}">
+                    <i class="fas fa-download"></i>
+                </button>
+            </div>
+        </article>
+    `);
+
+    results.innerHTML = [...folderCards, ...documentCards].join('') || '<div class="library-empty">当前目录为空，可新建子文件库或上传文件夹。</div>';
+
+    tree.querySelectorAll('[data-folder-id]').forEach(btn => {
+        btn.addEventListener('click', () => loadLibraryWorkspace(parseInt(btn.dataset.folderId)));
+    });
+    tree.querySelector('[data-folder-root="true"]')?.addEventListener('click', () => loadLibraryWorkspace(null));
+    crumbs.querySelectorAll('[data-folder-id]').forEach(btn => {
+        btn.addEventListener('click', () => loadLibraryWorkspace(parseInt(btn.dataset.folderId)));
+    });
+    crumbs.querySelector('[data-folder-root="true"]')?.addEventListener('click', () => loadLibraryWorkspace(null));
+    results.querySelectorAll('.open-library-folder-btn').forEach(btn => {
+        btn.addEventListener('click', () => loadLibraryWorkspace(parseInt(btn.dataset.folderId)));
+    });
+    results.querySelectorAll('.preview-library-document-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const document = state.libraryDocuments.find(item => item.id === parseInt(btn.dataset.documentId));
+            if (document) openLibraryDocument(document);
+        });
+    });
+    results.querySelectorAll('.onlyoffice-library-document-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const document = state.libraryDocuments.find(item => item.id === parseInt(btn.dataset.documentId));
+            if (document) await openOnlyOfficeEditor({ ...document, source: 'library', readOnly: false });
+        });
+    });
+    results.querySelectorAll('.download-library-document-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            window.open(`${API_BASE}/library/documents/${btn.dataset.documentId}`, '_blank');
+        });
+    });
+
+    hydrateIcons(tree);
+    hydrateIcons(results);
+}
+
+function renderLibraryTreeNode(folder) {
+    const active = state.currentLibraryFolder?.id === folder.id;
+    return `
+        <div class="library-tree-node">
+            <button class="library-tree-item ${active ? 'active' : ''}" data-folder-id="${folder.id}">
+                <i class="fas fa-folder"></i>
+                <span>${escapeHtml(folder.name)}</span>
+            </button>
+            ${folder.children?.length ? `<div class="library-tree-children">${folder.children.map(renderLibraryTreeNode).join('')}</div>` : ''}
+        </div>
+    `;
+}
+
+async function openLibraryDocument(document) {
+    await openFilePreview({ ...document, source: 'library', readOnly: false });
+}
+
+async function createLibraryFolder() {
+    if (!state.currentProject) return;
+
+    const name = prompt('请输入子文件库名称');
+    if (!name || !name.trim()) return;
+
+    try {
+        await api(`/projects/${state.currentProject.id}/library/folders`, {
+            method: 'POST',
+            body: JSON.stringify({
+                name: name.trim(),
+                parent_id: state.currentLibraryFolder?.id || null
+            })
+        });
+        showToast('子文件库已创建', 'success');
+        await loadLibraryWorkspace(state.currentLibraryFolder?.id || null);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function uploadLibraryInputFiles(input, isFolderUpload = false) {
+    if (!state.currentProject || !input.files.length) return;
+
+    const formData = new FormData();
+    if (state.currentLibraryFolder?.id) {
+        formData.append('folder_id', state.currentLibraryFolder.id);
+    }
+
+    for (const file of input.files) {
+        formData.append('files', file);
+        formData.append('paths', isFolderUpload ? (file.webkitRelativePath || file.name) : file.name);
+    }
+
+    try {
+        await apiFormData(`/projects/${state.currentProject.id}/library/upload`, formData);
+        showToast(isFolderUpload ? '文件夹上传完成' : '文件上传完成', 'success');
+        await loadLibraryWorkspace(state.currentLibraryFolder?.id || null);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+
+    input.value = '';
+}
+
+async function searchLibrary() {
+    const query = document.getElementById('librarySearchInput').value.trim();
+    if (!state.currentProject) return;
+
+    if (!query) {
+        await loadLibraryWorkspace(state.currentLibraryFolder?.id || null);
+        return;
+    }
+
+    try {
+        const data = await api(`/projects/${state.currentProject.id}/library/search?q=${encodeURIComponent(query)}`);
+        const results = document.getElementById('libraryResults');
+        results.innerHTML = data.documents.map(document => `
+            <article class="library-item">
+                <div class="library-item-icon"><i class="fas fa-${getFileIcon(document.file_type)}"></i></div>
+                <div>
+                    <div class="library-item-name">${escapeHtml(document.original_filename)}</div>
+                    <div class="library-item-path">${document.breadcrumbs?.map(item => escapeHtml(item.name)).join(' / ') || '根目录'}</div>
+                </div>
+                <div class="library-item-actions">
+                    <button class="btn btn-secondary btn-sm preview-library-document-btn" data-document-id="${document.id}">
+                        <i class="fas fa-eye"></i>
+                        查阅
+                    </button>
+                    ${shouldUseOnlyOffice(document.file_type) ? `<button class="btn btn-secondary btn-sm onlyoffice-library-document-btn" data-document-id="${document.id}">
+                        <i class="fas fa-users"></i>
+                        Office
+                    </button>` : ''}
+                </div>
+            </article>
+        `).join('') || '<div class="library-empty">没有匹配的文件内容或文件名。</div>';
+
+        results.querySelectorAll('.preview-library-document-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const document = data.documents.find(item => item.id === parseInt(btn.dataset.documentId));
+                if (document) openLibraryDocument(document);
+            });
+        });
+        results.querySelectorAll('.onlyoffice-library-document-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const document = data.documents.find(item => item.id === parseInt(btn.dataset.documentId));
+                if (document) await openOnlyOfficeEditor({ ...document, source: 'library', readOnly: false });
+            });
+        });
+        hydrateIcons(results);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
 }
 
 // ==================== DRAG AND DROP ====================
@@ -1068,59 +1351,96 @@ function shouldUseOnlyOffice(fileType) {
     return onlyOfficeTypes.includes(fileType);
 }
 
-async function openFileEditor(attachment) {
-    state.currentAttachment = attachment;
+function buildFileTarget(resource) {
+    return {
+        ...resource,
+        source: resource.source || 'attachment',
+        readOnly: Boolean(resource.readOnly)
+    };
+}
 
-    // Always use lightweight built-in preview (OnlyOffice available via explicit button)
-    document.getElementById('fileEditorTitle').textContent = attachment.original_filename;
-    document.getElementById('fileTypeBadge').textContent = attachment.file_type.toUpperCase();
+function setCurrentFileTarget(resource) {
+    state.currentAttachment = buildFileTarget(resource);
 
-    // Show/hide "协同编辑" button based on file type
+    document.getElementById('fileEditorTitle').textContent = state.currentAttachment.original_filename || state.currentAttachment.file_name || '文件预览';
+    document.getElementById('fileTypeBadge').textContent = (state.currentAttachment.file_type || 'other').toUpperCase();
+
+    const saveBtn = document.getElementById('saveFileBtn');
+    const downloadBtn = document.getElementById('downloadFileBtn');
     const ooBtn = document.getElementById('openInOnlyOfficeBtn');
-    if (ooBtn) {
-        ooBtn.style.display = shouldUseOnlyOffice(attachment.file_type) ? '' : 'none';
-    }
 
+    if (saveBtn) saveBtn.style.display = state.currentAttachment.readOnly ? 'none' : '';
+    if (downloadBtn) downloadBtn.style.display = '';
+    if (ooBtn) ooBtn.style.display = shouldUseOnlyOffice(state.currentAttachment.file_type) && state.currentAttachment.source !== 'chat' ? '' : 'none';
+}
+
+function getFileContentEndpoint(resource) {
+    if (resource.source === 'library') {
+        return `/library/documents/${resource.id}/content`;
+    }
+    if (resource.source === 'chat') {
+        return `/chat/files/${resource.chatFilename}/content`;
+    }
+    return `/attachments/${resource.id}/content`;
+}
+
+function getFileDownloadUrl(resource) {
+    if (resource.source === 'library') {
+        return `${API_BASE}/library/documents/${resource.id}`;
+    }
+    if (resource.source === 'chat') {
+        return `${API_BASE}/chat/files/${resource.chatFilename}`;
+    }
+    return `${API_BASE}/attachments/${resource.id}`;
+}
+
+function getOnlyOfficeConfigEndpoint(resource) {
+    if (resource.source === 'library') {
+        return `/library/documents/${resource.id}/onlyoffice-config`;
+    }
+    return `/attachments/${resource.id}/onlyoffice-config`;
+}
+
+function renderFilePreviewContent(contentArea, data, readOnly = false) {
+    switch (data.type) {
+        case 'text':
+        case 'word':
+            contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea" ${readOnly ? 'readonly' : ''}>${escapeHtml(data.content)}</textarea>`;
+            break;
+        case 'pdf':
+            contentArea.innerHTML = `<div class="pdf-viewer">${data.content.map((page, i) =>
+                `<div class="pdf-page"><strong>第 ${i + 1} 页</strong><br>${escapeHtml(page)}</div>`
+            ).join('')}</div>`;
+            break;
+        case 'excel':
+            renderSpreadsheet(contentArea, data.content, readOnly);
+            break;
+        case 'powerpoint':
+            contentArea.innerHTML = data.content.map((slide, i) =>
+                `<div class="pdf-page"><h3>幻灯片 ${i + 1}</h3><pre>${escapeHtml(slide)}</pre></div>`
+            ).join('');
+            break;
+        default:
+            contentArea.innerHTML = '<p class="text-center text-muted">此文件类型不支持预览</p>';
+    }
+}
+
+async function openFilePreview(resource) {
+    setCurrentFileTarget(resource);
     const contentArea = document.getElementById('fileEditorContent');
     contentArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-
     openModal('fileEditorModal');
 
     try {
-        const data = await api(`/attachments/${attachment.id}/content`);
-
-        switch (data.type) {
-            case 'text':
-                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea">${escapeHtml(data.content)}</textarea>`;
-                break;
-
-            case 'pdf':
-                contentArea.innerHTML = `<div class="pdf-viewer">${data.content.map((page, i) =>
-                    `<div class="pdf-page"><strong>第 ${i + 1} 页</strong><br>${escapeHtml(page)}</div>`
-                ).join('')
-                    }</div>`;
-                break;
-
-            case 'word':
-                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea">${escapeHtml(data.content)}</textarea>`;
-                break;
-
-            case 'excel':
-                renderSpreadsheet(contentArea, data.content);
-                break;
-
-            case 'powerpoint':
-                contentArea.innerHTML = data.content.map((slide, i) =>
-                    `<div class="pdf-page"><h3>幻灯片 ${i + 1}</h3><pre>${escapeHtml(slide)}</pre></div>`
-                ).join('');
-                break;
-
-            default:
-                contentArea.innerHTML = '<p class="text-center text-muted">此文件类型不支持预览</p>';
-        }
+        const data = await api(getFileContentEndpoint(state.currentAttachment));
+        renderFilePreviewContent(contentArea, data, state.currentAttachment.readOnly);
     } catch (err) {
         contentArea.innerHTML = `<p class="text-center" style="color: var(--accent-danger);">${err.message}</p>`;
     }
+}
+
+async function openFileEditor(attachment) {
+    await openFilePreview({ ...attachment, source: 'attachment', readOnly: false });
 }
 
 // ==================== ONLYOFFICE INTEGRATION ====================
@@ -1145,89 +1465,49 @@ async function loadOnlyOfficeApi(onlyofficeUrl) {
     });
 }
 
-async function openOnlyOfficeEditor(attachment) {
-    state.currentAttachment = attachment;
-
-    document.getElementById('onlyofficeTitle').textContent = attachment.original_filename;
+async function openOnlyOfficeEditor(resource) {
+    state.currentAttachment = buildFileTarget(resource);
+    document.getElementById('onlyofficeTitle').textContent = state.currentAttachment.original_filename;
     document.getElementById('onlyofficeEditor').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    const versionBtn = document.getElementById('saveVersionBtn');
+    const historyBtn = document.getElementById('versionHistoryBtn');
+    if (versionBtn) versionBtn.style.display = state.currentAttachment.source === 'attachment' ? '' : 'none';
+    if (historyBtn) historyBtn.style.display = state.currentAttachment.source === 'attachment' ? '' : 'none';
 
     openModal('onlyofficeModal');
 
     try {
-        // Get OnlyOffice configuration from server
-        const result = await api(`/attachments/${attachment.id}/onlyoffice-config`);
+        const result = await api(getOnlyOfficeConfigEndpoint(state.currentAttachment));
         const { config, onlyoffice_url } = result;
-
-        // Load OnlyOffice API if not already loaded
         const apiLoaded = await loadOnlyOfficeApi(onlyoffice_url);
 
         if (!apiLoaded) {
-            // Fall back to built-in editor
             closeModal('onlyofficeModal');
-            await openBuiltInOfficeEditor(attachment);
+            await openBuiltInOfficeEditor(state.currentAttachment);
             return;
         }
 
-        // Destroy previous editor if exists
         if (onlyOfficeDocEditor) {
             onlyOfficeDocEditor.destroyEditor();
             onlyOfficeDocEditor = null;
         }
 
-        // Clear container
         document.getElementById('onlyofficeEditor').innerHTML = '';
-
-        // Initialize OnlyOffice editor
         onlyOfficeDocEditor = new DocsAPI.DocEditor('onlyofficeEditor', config);
-
     } catch (err) {
-        // Fall back to built-in editor when OnlyOffice fails
         closeModal('onlyofficeModal');
-        await openBuiltInOfficeEditor(attachment);
+        await openBuiltInOfficeEditor(state.currentAttachment);
     }
 }
 
 // Fallback editor for Word/Excel/PPT when OnlyOffice is unavailable
-async function openBuiltInOfficeEditor(attachment) {
-    state.currentAttachment = attachment;
-
-    document.getElementById('fileEditorTitle').textContent = attachment.original_filename;
-    document.getElementById('fileTypeBadge').textContent = attachment.file_type.toUpperCase();
-
-    const contentArea = document.getElementById('fileEditorContent');
-    contentArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-
-    openModal('fileEditorModal');
-
-    try {
-        const data = await api(`/attachments/${attachment.id}/content`);
-
-        switch (data.type) {
-            case 'word':
-                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea">${escapeHtml(data.content)}</textarea>`;
-                break;
-
-            case 'excel':
-                renderSpreadsheet(contentArea, data.content);
-                break;
-
-            case 'powerpoint':
-                contentArea.innerHTML = data.content.map((slide, i) =>
-                    `<div class="pdf-page"><h3>幻灯片 ${i + 1}</h3><pre>${escapeHtml(slide)}</pre></div>`
-                ).join('');
-                break;
-
-            default:
-                contentArea.innerHTML = '<p class="text-center text-muted">此文件类型不支持预览</p>';
-        }
-    } catch (err) {
-        contentArea.innerHTML = `<p class="text-center" style="color: var(--accent-danger);">${err.message}</p>`;
-    }
+async function openBuiltInOfficeEditor(resource) {
+    await openFilePreview(resource);
 }
 
 // Save Version functionality (manual version creation independent of OnlyOffice)
 document.getElementById('saveVersionBtn')?.addEventListener('click', async () => {
-    if (!state.currentAttachment) {
+    if (!state.currentAttachment || state.currentAttachment.source !== 'attachment') {
         showToast('没有选中的附件', 'error');
         return;
     }
@@ -1331,7 +1611,7 @@ document.querySelector('[data-close="onlyofficeModal"]')?.addEventListener('clic
     }
 });
 
-function renderSpreadsheet(container, sheets) {
+function renderSpreadsheet(container, sheets, readOnly = false) {
     const sheetNames = Object.keys(sheets);
 
     container.innerHTML = `
@@ -1366,7 +1646,7 @@ function renderSpreadsheet(container, sheets) {
                     ${data.map((row, ri) => `
                         <tr>
                             ${row.map((cell, ci) =>
-            `<td contenteditable="true" data-row="${ri}" data-col="${ci}">${escapeHtml(cell)}</td>`
+            `<td contenteditable="${readOnly ? 'false' : 'true'}" data-row="${ri}" data-col="${ci}">${escapeHtml(cell)}</td>`
         ).join('')}
                         </tr>
                     `).join('')}
@@ -1416,7 +1696,7 @@ document.getElementById('saveFileBtn').addEventListener('click', async () => {
     }
 
     try {
-        await api(`/attachments/${state.currentAttachment.id}/content`, {
+        await api(getFileContentEndpoint(state.currentAttachment), {
             method: 'PUT',
             body: JSON.stringify({ content })
         });
@@ -1428,7 +1708,7 @@ document.getElementById('saveFileBtn').addEventListener('click', async () => {
 
 document.getElementById('downloadFileBtn').addEventListener('click', () => {
     if (state.currentAttachment) {
-        downloadAttachment(state.currentAttachment.id);
+        window.open(getFileDownloadUrl(state.currentAttachment), '_blank');
     }
 });
 
@@ -1545,6 +1825,32 @@ document.getElementById('statusFilter').addEventListener('change', applyFilters)
 document.getElementById('categoryFilter').addEventListener('change', applyFilters);
 document.getElementById('includeAttachments').addEventListener('change', applyFilters);
 document.getElementById('assigneeFilter').addEventListener('change', applyFilters);
+
+document.querySelectorAll('#projectViewSwitch .view-switch-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        await setProjectView(btn.dataset.view);
+    });
+});
+
+document.getElementById('libraryToggleBtn').addEventListener('click', async () => {
+    const nextView = state.activeProjectView === 'library' ? 'board' : 'library';
+    await setProjectView(nextView);
+});
+
+document.getElementById('newLibraryFolderBtn').addEventListener('click', createLibraryFolder);
+document.getElementById('uploadLibraryFilesBtn').addEventListener('click', () => {
+    document.getElementById('libraryFileInput').click();
+});
+document.getElementById('uploadLibraryFolderBtn').addEventListener('click', () => {
+    document.getElementById('libraryFolderInput').click();
+});
+document.getElementById('libraryFileInput').addEventListener('change', async (event) => {
+    await uploadLibraryInputFiles(event.target, false);
+});
+document.getElementById('libraryFolderInput').addEventListener('change', async (event) => {
+    await uploadLibraryInputFiles(event.target, true);
+});
+document.getElementById('librarySearchInput').addEventListener('input', debounce(searchLibrary, 300));
 
 // ==================== MEMBERS ====================
 document.getElementById('inviteMemberBtn').addEventListener('click', () => {
@@ -1783,48 +2089,14 @@ function showChatFileContextMenu(event, filename, fileType, displayName) {
 
 // Lightweight preview for chat files
 async function openChatFilePreview(filename, displayName) {
-    document.getElementById('fileEditorTitle').textContent = displayName;
     const fileType = getFileTypeFromName(filename);
-    document.getElementById('fileTypeBadge').textContent = fileType.toUpperCase();
-
-    // Hide OnlyOffice button for chat file preview (use context menu instead)
-    const ooBtn = document.getElementById('openInOnlyOfficeBtn');
-    if (ooBtn) ooBtn.style.display = 'none';
-
-    const contentArea = document.getElementById('fileEditorContent');
-    contentArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-
-    openModal('fileEditorModal');
-
-    try {
-        const data = await api(`/chat/files/${filename}/content`);
-
-        switch (data.type) {
-            case 'text':
-                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea" readonly>${escapeHtml(data.content)}</textarea>`;
-                break;
-            case 'word':
-                contentArea.innerHTML = `<textarea class="text-editor-area" id="textEditorArea" readonly>${escapeHtml(data.content)}</textarea>`;
-                break;
-            case 'excel':
-                renderSpreadsheet(contentArea, data.content);
-                break;
-            case 'powerpoint':
-                contentArea.innerHTML = data.content.map((slide, i) =>
-                    `<div class="pdf-page"><h3>幻灯片 ${i + 1}</h3><pre>${escapeHtml(slide)}</pre></div>`
-                ).join('');
-                break;
-            case 'pdf':
-                contentArea.innerHTML = `<div class="pdf-viewer">${data.content.map((page, i) =>
-                    `<div class="pdf-page"><strong>第 ${i + 1} 页</strong><br>${escapeHtml(page)}</div>`
-                ).join('')}</div>`;
-                break;
-            default:
-                contentArea.innerHTML = '<p class="text-center text-muted">此文件类型不支持预览</p>';
-        }
-    } catch (err) {
-        contentArea.innerHTML = `<p class="text-center" style="color: var(--accent-danger);">${err.message}</p>`;
-    }
+    await openFilePreview({
+        source: 'chat',
+        chatFilename: filename,
+        original_filename: displayName,
+        file_type: fileType,
+        readOnly: true
+    });
 }
 
 document.getElementById('chatToggleBtn').addEventListener('click', () => {
@@ -2000,9 +2272,15 @@ document.getElementById('backToProjects').addEventListener('click', () => {
     stopChatPolling();
     state.chatMessages = [];
     state.currentProject = null;
+    state.currentLibraryFolder = null;
+    state.libraryTree = [];
+    state.libraryFolders = [];
+    state.libraryDocuments = [];
+    state.activeProjectView = 'board';
     document.getElementById('chatPanel').classList.remove('open');
     document.getElementById('aiPanel').classList.remove('open');
     document.getElementById('typingIndicator').classList.add('hidden');
+    document.getElementById('librarySearchInput').value = '';
     updateSyncStatus('ready', '本地模式');
     loadDashboard();
 });
@@ -2368,6 +2646,10 @@ async function openChatFile(filename, type) {
 
 async function openChatFileOnlyOffice(filename) {
     try {
+        const versionBtn = document.getElementById('saveVersionBtn');
+        const historyBtn = document.getElementById('versionHistoryBtn');
+        if (versionBtn) versionBtn.style.display = 'none';
+        if (historyBtn) historyBtn.style.display = 'none';
         const result = await api(`/chat/files/${filename}/onlyoffice-config`);
         const { config, onlyoffice_url } = result;
 

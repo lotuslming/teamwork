@@ -189,6 +189,10 @@
                     </div>
                 </div>
                 <div class="kanban-header-right">
+                    <button class="btn btn-secondary btn-sm" id="libraryToggleBtn">
+                        <i class="fas fa-file-alt"></i>
+                        <span>文件库</span>
+                    </button>
                     <button class="btn btn-secondary btn-sm" id="inviteMemberBtn">
                         <i class="fas fa-user-plus"></i>
                         <span>邀请成员</span>
@@ -208,6 +212,10 @@
             </div>
 
             <div class="kanban-toolbar">
+                <div class="view-switch" id="projectViewSwitch">
+                    <button class="view-switch-btn active" data-view="board">看板</button>
+                    <button class="view-switch-btn" data-view="library">文件库</button>
+                </div>
                 <div class="search-filter">
                     <i class="fas fa-search icon"></i>
                     <input type="text" placeholder="搜索卡片..." id="cardSearchInput">
@@ -241,6 +249,48 @@
             <div class="kanban-board" id="kanbanBoard">
                 <!-- Columns will be rendered here -->
             </div>
+
+            <section class="library-workspace hidden" id="libraryWorkspace">
+                <aside class="library-sidebar">
+                    <div class="library-sidebar-header">
+                        <h3>项目文件库</h3>
+                        <button class="btn btn-secondary btn-sm" id="newLibraryFolderBtn">
+                            <i class="fas fa-plus"></i>
+                            新建子文件库
+                        </button>
+                    </div>
+                    <div class="library-tree" id="libraryTree">
+                        <!-- Tree will be rendered here -->
+                    </div>
+                </aside>
+                <div class="library-main">
+                    <div class="library-toolbar">
+                        <div>
+                            <div class="library-breadcrumbs" id="libraryBreadcrumbs"></div>
+                            <p class="library-meta" id="libraryMeta">根目录</p>
+                        </div>
+                        <div class="library-actions">
+                            <div class="search-filter library-search">
+                                <i class="fas fa-search icon"></i>
+                                <input type="text" placeholder="检索文件名和内容..." id="librarySearchInput">
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="uploadLibraryFilesBtn">
+                                <i class="fas fa-upload"></i>
+                                上传文件
+                            </button>
+                            <button class="btn btn-primary btn-sm" id="uploadLibraryFolderBtn">
+                                <i class="fas fa-upload"></i>
+                                上传文件夹
+                            </button>
+                            <input type="file" id="libraryFileInput" class="hidden" multiple>
+                            <input type="file" id="libraryFolderInput" class="hidden" webkitdirectory directory multiple>
+                        </div>
+                    </div>
+                    <div class="library-results" id="libraryResults">
+                        <!-- Folder contents will be rendered here -->
+                    </div>
+                </div>
+            </section>
         </div>
     </main>
 

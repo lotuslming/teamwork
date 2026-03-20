@@ -18,7 +18,7 @@ import markdown
 import bleach
 
 from config import config
-from models import db, User, Project, Card, Category, Attachment, ChatMessage, FileVersion, project_members, UnreadStatus
+from models import db, User, Project, Card, Category, Attachment, ChatMessage, FileVersion, project_members, UnreadStatus, LibraryFolder, LibraryDocument
 
 app = Flask(__name__)
 env = os.environ.get('FLASK_ENV', 'development')
@@ -28,6 +28,7 @@ app.config.from_object(config.get(env, config['default']))
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'attachments'), exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'chat'), exist_ok=True)
+os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'library'), exist_ok=True)
 
 # Initialize extensions
 db.init_app(app)
@@ -150,6 +151,122 @@ def extract_file_content(file_path, file_type, max_content_length=50000):
         # Log but don't fail - content indexing is optional
         print(f"Content extraction skipped for {file_path}: {e}")
         return None
+
+def user_can_access_project(project, user_id):
+    return any(member.id == user_id for member in project.members)
+
+def build_library_tree(project_id, parent_id=None):
+    folders = LibraryFolder.query.filter_by(project_id=project_id, parent_id=parent_id).order_by(LibraryFolder.name.asc()).all()
+    return [folder.to_dict(include_children=True) for folder in folders]
+
+def get_or_create_library_folder(project_id, relative_folder_path):
+    normalized = (relative_folder_path or '').strip('/').strip()
+    if not normalized:
+        return None
+
+    parent_id = None
+    current_folder = None
+    for raw_part in normalized.split('/'):
+        part = raw_part.strip().replace('\\', '')
+        if not part:
+            continue
+
+        current_folder = LibraryFolder.query.filter_by(
+            project_id=project_id,
+            parent_id=parent_id,
+            name=part
+        ).first()
+
+        if not current_folder:
+            current_folder = LibraryFolder(
+                project_id=project_id,
+                parent_id=parent_id,
+                name=part
+            )
+            db.session.add(current_folder)
+            db.session.flush()
+
+        parent_id = current_folder.id
+
+    return current_folder
+
+def get_folder_breadcrumb(folder):
+    items = []
+    current = folder
+    while current:
+        items.append({'id': current.id, 'name': current.name})
+        current = current.parent
+    return list(reversed(items))
+
+def read_document_content(file_path, file_type):
+    if file_type == 'text':
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return {'content': f.read(), 'type': 'text'}
+
+    if file_type == 'word':
+        from docx import Document
+        doc = Document(file_path)
+        return {'content': '\n\n'.join([para.text for para in doc.paragraphs]), 'type': 'word'}
+
+    if file_type == 'excel':
+        import openpyxl
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        sheets = {}
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append([str(cell) if cell is not None else '' for cell in row])
+            sheets[sheet_name] = rows
+        wb.close()
+        return {'content': sheets, 'type': 'excel'}
+
+    if file_type == 'powerpoint':
+        from pptx import Presentation
+        prs = Presentation(file_path)
+        slides = []
+        for slide in prs.slides:
+            slide_content = []
+            for shape in slide.shapes:
+                if hasattr(shape, 'text'):
+                    slide_content.append(shape.text)
+            slides.append('\n'.join(slide_content))
+        return {'content': slides, 'type': 'powerpoint'}
+
+    if file_type == 'pdf':
+        from PyPDF2 import PdfReader
+        reader = PdfReader(file_path)
+        return {'content': [(page.extract_text() or '') for page in reader.pages], 'type': 'pdf'}
+
+    raise ValueError('不支持的文件类型')
+
+def write_document_content(file_path, file_type, content):
+    if file_type == 'text':
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return
+
+    if file_type == 'word':
+        from docx import Document
+        doc = Document()
+        for para in content.split('\n\n'):
+            doc.add_paragraph(para)
+        doc.save(file_path)
+        return
+
+    if file_type == 'excel':
+        import openpyxl
+        wb = openpyxl.Workbook()
+        for index, (sheet_name, sheet_rows) in enumerate(content.items()):
+            ws = wb.active if index == 0 else wb.create_sheet(sheet_name)
+            ws.title = sheet_name
+            for row_idx, row in enumerate(sheet_rows, 1):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+        wb.save(file_path)
+        return
+
+    raise ValueError('此文件类型不支持在线编辑')
 
 # ================== AUTH ROUTES ==================
 
@@ -743,6 +860,221 @@ def delete_category(category_id):
     db.session.commit()
     return jsonify({'message': '类别已删除'})
 
+# ================== FILE LIBRARY ROUTES ==================
+
+def serialize_library_document(document):
+    data = document.to_dict()
+    data['breadcrumbs'] = get_folder_breadcrumb(document.folder) if document.folder else []
+    return data
+
+@app.route('/api/projects/<int:project_id>/library', methods=['GET'])
+@jwt_required()
+def get_project_library(project_id):
+    user_id = int(get_jwt_identity())
+    project = Project.query.get_or_404(project_id)
+
+    if not user_can_access_project(project, user_id):
+        return jsonify({'error': '无权访问文件库'}), 403
+
+    folder_id = request.args.get('folder_id', type=int)
+    folder = None
+    if folder_id is not None:
+        folder = LibraryFolder.query.filter_by(project_id=project_id, id=folder_id).first_or_404()
+
+    folders = LibraryFolder.query.filter_by(
+        project_id=project_id,
+        parent_id=folder.id if folder else None
+    ).order_by(LibraryFolder.name.asc()).all()
+    documents = LibraryDocument.query.filter_by(
+        project_id=project_id,
+        folder_id=folder.id if folder else None
+    ).order_by(LibraryDocument.original_filename.asc()).all()
+
+    return jsonify({
+        'tree': build_library_tree(project_id),
+        'current_folder': folder.to_dict() if folder else None,
+        'breadcrumbs': get_folder_breadcrumb(folder) if folder else [],
+        'folders': [item.to_dict() for item in folders],
+        'documents': [serialize_library_document(item) for item in documents]
+    })
+
+@app.route('/api/projects/<int:project_id>/library/folders', methods=['POST'])
+@jwt_required()
+def create_library_folder(project_id):
+    user_id = int(get_jwt_identity())
+    project = Project.query.get_or_404(project_id)
+
+    if not user_can_access_project(project, user_id):
+        return jsonify({'error': '无权创建文件库'}), 403
+
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    parent_id = data.get('parent_id')
+
+    if not name:
+        return jsonify({'error': '请输入子文件库名称'}), 400
+
+    parent = None
+    if parent_id:
+        parent = LibraryFolder.query.filter_by(project_id=project_id, id=parent_id).first()
+        if not parent:
+            return jsonify({'error': '父级文件库不存在'}), 404
+
+    exists = LibraryFolder.query.filter_by(
+        project_id=project_id,
+        parent_id=parent.id if parent else None,
+        name=name
+    ).first()
+    if exists:
+        return jsonify({'error': '同级目录下已存在同名子文件库'}), 400
+
+    folder = LibraryFolder(project_id=project_id, parent_id=parent.id if parent else None, name=name)
+    db.session.add(folder)
+    db.session.commit()
+    return jsonify(folder.to_dict()), 201
+
+@app.route('/api/projects/<int:project_id>/library/upload', methods=['POST'])
+@jwt_required()
+def upload_library_documents(project_id):
+    user_id = int(get_jwt_identity())
+    project = Project.query.get_or_404(project_id)
+
+    if not user_can_access_project(project, user_id):
+        return jsonify({'error': '无权上传文件到文件库'}), 403
+
+    if 'files' not in request.files:
+        return jsonify({'error': '没有选择文件'}), 400
+
+    target_folder_id = request.form.get('folder_id', type=int)
+    target_folder = None
+    target_folder_path = ''
+    if target_folder_id:
+        target_folder = LibraryFolder.query.filter_by(project_id=project_id, id=target_folder_id).first()
+        if not target_folder:
+            return jsonify({'error': '目标文件库不存在'}), 404
+        target_folder_path = '/'.join(item['name'] for item in get_folder_breadcrumb(target_folder))
+
+    files = request.files.getlist('files')
+    paths = request.form.getlist('paths')
+    created = []
+
+    for index, file in enumerate(files):
+        if not file or not file.filename:
+            continue
+
+        original_filename = file.filename
+        relative_path = (paths[index] if index < len(paths) else original_filename).replace('\\', '/')
+        relative_dir = os.path.dirname(relative_path)
+
+        folder = target_folder
+        if relative_dir and relative_dir != '.':
+            combined_path = '/'.join(part for part in [target_folder_path, relative_dir] if part)
+            folder = get_or_create_library_folder(project_id, combined_path)
+
+        ext = original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else ''
+        unique_filename = f"{uuid.uuid4().hex}.{ext}" if ext else uuid.uuid4().hex
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], 'library', unique_filename)
+        file.save(save_path)
+
+        file_type = get_file_type(original_filename)
+        document = LibraryDocument(
+            project_id=project_id,
+            folder_id=folder.id if folder else None,
+            filename=unique_filename,
+            original_filename=original_filename,
+            file_type=file_type,
+            file_size=os.path.getsize(save_path),
+            content=extract_file_content(save_path, file_type),
+            uploaded_by_id=user_id
+        )
+        db.session.add(document)
+        created.append(document)
+
+    db.session.commit()
+    return jsonify({'documents': [serialize_library_document(item) for item in created]}), 201
+
+@app.route('/api/projects/<int:project_id>/library/search', methods=['GET'])
+@jwt_required()
+def search_library_documents(project_id):
+    user_id = int(get_jwt_identity())
+    project = Project.query.get_or_404(project_id)
+
+    if not user_can_access_project(project, user_id):
+        return jsonify({'error': '无权检索文件库'}), 403
+
+    q = (request.args.get('q') or '').strip()
+    if not q:
+        return jsonify({'documents': []})
+
+    documents = LibraryDocument.query.filter(
+        LibraryDocument.project_id == project_id,
+        (LibraryDocument.original_filename.ilike(f'%{q}%')) |
+        (LibraryDocument.content.ilike(f'%{q}%'))
+    ).order_by(LibraryDocument.updated_at.desc()).limit(100).all()
+
+    return jsonify({'documents': [serialize_library_document(item) for item in documents]})
+
+@app.route('/api/library/documents/<int:document_id>', methods=['GET'])
+@jwt_required()
+def download_library_document(document_id):
+    user_id = int(get_jwt_identity())
+    document = LibraryDocument.query.get_or_404(document_id)
+
+    if not user_can_access_project(document.project, user_id):
+        return jsonify({'error': '无权下载文件'}), 403
+
+    return send_from_directory(
+        os.path.join(app.config['UPLOAD_FOLDER'], 'library'),
+        document.filename,
+        as_attachment=True,
+        download_name=document.original_filename
+    )
+
+@app.route('/api/library/documents/<int:document_id>/content', methods=['GET'])
+@jwt_required()
+def get_library_document_content(document_id):
+    user_id = int(get_jwt_identity())
+    document = LibraryDocument.query.get_or_404(document_id)
+
+    if not user_can_access_project(document.project, user_id):
+        return jsonify({'error': '无权访问文件'}), 403
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'library', document.filename)
+    try:
+        return jsonify(read_document_content(file_path, document.file_type))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+@app.route('/api/library/documents/<int:document_id>/content', methods=['PUT'])
+@jwt_required()
+def update_library_document_content(document_id):
+    user_id = int(get_jwt_identity())
+    document = LibraryDocument.query.get_or_404(document_id)
+
+    if not user_can_access_project(document.project, user_id):
+        return jsonify({'error': '无权编辑文件'}), 403
+
+    data = request.get_json() or {}
+    content = data.get('content')
+    if content is None:
+        return jsonify({'error': '没有内容'}), 400
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'library', document.filename)
+    try:
+        write_document_content(file_path, document.file_type, content)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+    document.file_size = os.path.getsize(file_path)
+    document.content = extract_file_content(file_path, document.file_type)
+    document.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'message': '文件已保存'})
+
 # ================== ATTACHMENT ROUTES ==================
 
 @app.route('/api/cards/<int:card_id>/attachments', methods=['POST'])
@@ -971,6 +1303,55 @@ def generate_onlyoffice_token(payload):
     secret = app.config.get('ONLYOFFICE_JWT_SECRET', 'teamwork-onlyoffice-secret-key')
     return pyjwt.encode(payload, secret, algorithm='HS256')
 
+def build_onlyoffice_config(user, title, file_url, callback_url, doc_key):
+    ext = title.rsplit('.', 1)[-1].lower() if '.' in title else ''
+    doc_type_map = {
+        'docx': 'word', 'doc': 'word',
+        'xlsx': 'cell', 'xls': 'cell',
+        'pptx': 'slide', 'ppt': 'slide'
+    }
+    document_type = doc_type_map.get(ext)
+    if not document_type:
+        return None
+
+    config = {
+        "document": {
+            "fileType": ext,
+            "key": doc_key,
+            "title": title,
+            "url": file_url,
+            "permissions": {
+                "edit": True,
+                "download": True,
+                "print": True,
+                "review": True,
+                "comment": True
+            }
+        },
+        "documentType": document_type,
+        "editorConfig": {
+            "mode": "edit",
+            "lang": "zh-CN",
+            "callbackUrl": callback_url,
+            "user": {
+                "id": str(user.id),
+                "name": user.username
+            },
+            "customization": {
+                "autosave": True,
+                "forcesave": True,
+                "chat": True,
+                "comments": True,
+                "compactHeader": False,
+                "feedback": False,
+                "help": False
+            }
+        },
+        "token": ""
+    }
+    config["token"] = generate_onlyoffice_token(config)
+    return config
+
 def drop_onlyoffice_cache(doc_key):
     """Tell OnlyOffice to drop cached document so restored version is shown"""
     try:
@@ -1004,18 +1385,6 @@ def get_onlyoffice_config(attachment_id):
     if not any(m.id == user_id for m in project.members):
         return jsonify({'error': '无权访问此附件'}), 403
     
-    # Determine document type
-    ext = attachment.original_filename.rsplit('.', 1)[-1].lower() if '.' in attachment.original_filename else ''
-    doc_type_map = {
-        'docx': 'word', 'doc': 'word',
-        'xlsx': 'cell', 'xls': 'cell',
-        'pptx': 'slide', 'ppt': 'slide'
-    }
-    document_type = doc_type_map.get(ext)
-    
-    if not document_type:
-        return jsonify({'error': '此文件类型不支持OnlyOffice编辑'}), 400
-    
     # Build file URL that OnlyOffice can access from Docker container
     # Use INTERNAL_URL config for Docker bridge access (not localhost which Docker can't reach)
     internal_url = app.config.get('INTERNAL_URL', 'http://172.17.0.1:5000').rstrip('/')
@@ -1026,46 +1395,34 @@ def get_onlyoffice_config(attachment_id):
     # Use millisecond precision to ensure key changes even if modifications happen in same second
     doc_key = f"{attachment_id}_{int(attachment.uploaded_at.timestamp() * 1000)}"
     
-    # Build OnlyOffice configuration
-    config = {
-        "document": {
-            "fileType": ext,
-            "key": doc_key,
-            "title": attachment.original_filename,
-            "url": file_url,
-            "permissions": {
-                "edit": True,
-                "download": True,
-                "print": True,
-                "review": True,
-                "comment": True
-            }
-        },
-        "documentType": document_type,
-        "editorConfig": {
-            "mode": "edit",
-            "lang": "zh-CN",
-            "callbackUrl": callback_url,
-            "user": {
-                "id": str(user.id),
-                "name": user.username
-            },
-            "customization": {
-                "autosave": True,
-                "forcesave": True,
-                "chat": True,
-                "comments": True,
-                "compactHeader": False,
-                "feedback": False,
-                "help": False
-            }
-        },
-        "token": ""
-    }
+    config = build_onlyoffice_config(user, attachment.original_filename, file_url, callback_url, doc_key)
+    if not config:
+        return jsonify({'error': '此文件类型不支持OnlyOffice编辑'}), 400
     
-    # Generate JWT token and add to config
-    config["token"] = generate_onlyoffice_token(config)
-    
+    return jsonify({
+        'config': config,
+        'onlyoffice_url': app.config.get('ONLYOFFICE_URL', 'http://localhost:8080')
+    })
+
+@app.route('/api/library/documents/<int:document_id>/onlyoffice-config', methods=['GET'])
+@jwt_required()
+def get_library_document_onlyoffice_config(document_id):
+    user_id = int(get_jwt_identity())
+    user = User.query.get_or_404(user_id)
+    document = LibraryDocument.query.get_or_404(document_id)
+
+    if not user_can_access_project(document.project, user_id):
+        return jsonify({'error': '无权访问此文件'}), 403
+
+    internal_url = app.config.get('INTERNAL_URL', 'http://172.17.0.1:5000').rstrip('/')
+    file_url = f"{internal_url}/api/library/documents/{document_id}/download"
+    callback_url = f"{internal_url}/api/library/onlyoffice/callback"
+    doc_key = f"lib_{document_id}_{int(document.updated_at.timestamp() * 1000)}"
+
+    config = build_onlyoffice_config(user, document.original_filename, file_url, callback_url, doc_key)
+    if not config:
+        return jsonify({'error': '此文件类型不支持OnlyOffice编辑'}), 400
+
     return jsonify({
         'config': config,
         'onlyoffice_url': app.config.get('ONLYOFFICE_URL', 'http://localhost:8080')
@@ -1085,6 +1442,21 @@ def download_attachment_for_onlyoffice(attachment_id):
         attachment.filename,
         as_attachment=True,
         download_name=attachment.original_filename
+    )
+
+@app.route('/api/library/documents/<int:document_id>/download', methods=['GET'])
+def download_library_document_for_onlyoffice(document_id):
+    document = LibraryDocument.query.get_or_404(document_id)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'library', document.filename)
+
+    if not os.path.exists(file_path):
+        return jsonify({'error': '文件不存在'}), 404
+
+    return send_from_directory(
+        os.path.join(app.config['UPLOAD_FOLDER'], 'library'),
+        document.filename,
+        as_attachment=True,
+        download_name=document.original_filename
     )
 
 @app.route('/api/onlyoffice/callback', methods=['POST'])
@@ -1186,6 +1558,50 @@ def onlyoffice_callback():
             return jsonify({'error': 1}), 200
     
     return jsonify({'error': 0}), 200
+
+@app.route('/api/library/onlyoffice/callback', methods=['POST'])
+def library_onlyoffice_callback():
+    data = request.get_json() or {}
+    status = data.get('status')
+
+    if status not in [2, 6]:
+        return jsonify({'error': 0}), 200
+
+    try:
+        download_url = data.get('url')
+        key = data.get('key')
+        if not download_url or not key:
+            return jsonify({'error': 1}), 200
+
+        document_id = int(key.split('_')[1])
+        document = LibraryDocument.query.get(document_id)
+        if not document:
+            return jsonify({'error': 1}), 200
+
+        response = requests.get(download_url, timeout=30)
+        if response.status_code != 200:
+            return jsonify({'error': 1}), 200
+
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'library', document.filename)
+        with open(file_path, 'wb') as f:
+            f.write(response.content)
+
+        document.file_size = len(response.content)
+        document.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        try:
+            document.content = extract_file_content(file_path, document.file_type)
+            db.session.commit()
+        except Exception as extract_error:
+            db.session.rollback()
+            print(f"Library content extraction error (non-critical): {extract_error}")
+
+        return jsonify({'error': 0}), 200
+    except Exception as exc:
+        db.session.rollback()
+        print(f"Library OnlyOffice callback error: {exc}")
+        return jsonify({'error': 1}), 200
 
 @app.route('/api/attachments/<int:attachment_id>/versions', methods=['GET'])
 @jwt_required()
