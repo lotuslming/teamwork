@@ -2,6 +2,12 @@
 
 本文档面向内网/离线环境，统一说明 TeamWork 主应用、本地 AI 服务、OnlyOffice Document Server 的部署方式与配置关系。
 
+当前版本已内置离线兜底逻辑：
+
+- 未配置本地大模型接口时，项目问答与总结自动退回本地规则分析模式。
+- OnlyOffice 容器未启动或健康检查失败时，Office 文件自动退回内置轻量编辑/预览模式。
+- 可通过 `GET /api/runtime-capabilities`、`GET /health`、`GET /ready` 查看当前能力状态。
+
 ## 1. 部署拓扑
 
 项目运行时有三条关键链路：

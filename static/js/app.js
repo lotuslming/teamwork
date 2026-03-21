@@ -17,7 +17,19 @@ const state = {
     isLogin: true,
     chatPollTimer: null,
     chatMessages: [],
-    activeProjectQuery: ''
+    activeProjectQuery: '',
+    runtimeCapabilities: {
+        offline_mode: true,
+        onlyoffice: { available: false, configured_url: '' },
+        ai: { mode: 'local', external_ready: false, fallback_enabled: true, api_base: '', model: 'local' }
+    },
+    dragState: {
+        activeCard: null,
+        rafId: null,
+        pendingColumn: null,
+        pendingY: 0,
+        lastTarget: null
+    }
 };
 
 const ICON_ALIASES = {
@@ -115,6 +127,7 @@ const SVG_ICONS = {
 
 function hydrateIcons(root = document) {
     root.querySelectorAll('i[class*="fa-"]').forEach((icon) => {
+        if (icon.dataset.iconHydrated === 'true') return;
         const faClass = Array.from(icon.classList).find(cls => cls.startsWith('fa-') && cls !== 'fa-spin');
         if (!faClass) return;
 
@@ -126,21 +139,32 @@ function hydrateIcons(root = document) {
             icon.classList.add('is-spinning');
         }
         icon.innerHTML = svg;
+        icon.dataset.iconHydrated = 'true';
     });
 }
 
 function observeIcons() {
+    let pendingRoots = new Set();
+    let rafId = null;
+    const flush = () => {
+        pendingRoots.forEach(root => hydrateIcons(root));
+        pendingRoots.clear();
+        rafId = null;
+    };
     const observer = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
             mutation.addedNodes.forEach((node) => {
                 if (node.nodeType !== 1) return;
                 if (node.matches?.('i[class*="fa-"]')) {
-                    hydrateIcons(node.parentElement || document);
+                    pendingRoots.add(node.parentElement || document);
                 } else if (node.querySelectorAll) {
-                    hydrateIcons(node);
+                    pendingRoots.add(node);
                 }
             });
         });
+        if (!rafId && pendingRoots.size) {
+            rafId = requestAnimationFrame(flush);
+        }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
@@ -160,6 +184,44 @@ function updateSyncStatus(mode = 'ready', text = '本地模式') {
     if (!pill || !textEl) return;
     pill.dataset.mode = mode;
     textEl.textContent = text;
+}
+
+function updateRuntimeUi() {
+    const aiInput = document.getElementById('aiQuestionInput');
+    const aiBaseInput = document.getElementById('openaiApiBase');
+    const aiModelInput = document.getElementById('openaiModel');
+    const aiIntro = document.querySelector('#aiChatMessages .ai-message.assistant p');
+    const aiHint = document.getElementById('aiConfigHint');
+    const aiMode = state.runtimeCapabilities.ai?.mode || 'local';
+
+    if (aiBaseInput) aiBaseInput.value = state.runtimeCapabilities.ai?.api_base || '';
+    if (aiModelInput) aiModelInput.value = state.runtimeCapabilities.ai?.model || '';
+
+    if (aiInput) {
+        aiInput.placeholder = aiMode === 'external' ? '输入问题...' : '输入问题（当前使用本地规则助手）...';
+    }
+
+    if (aiIntro) {
+        aiIntro.textContent = aiMode === 'external'
+            ? '你好，我会优先使用你配置的本地大模型接口来回答当前项目问题。'
+            : '你好，我当前运行在离线本地模式，会基于项目数据给出本地分析和总结。';
+    }
+
+    if (aiHint) {
+        aiHint.textContent = aiMode === 'external'
+            ? '当前已连接本地 OpenAI 兼容模型接口。'
+            : '当前未连接本地大模型接口，系统将自动使用内置离线分析模式。';
+    }
+}
+
+async function loadRuntimeCapabilities() {
+    try {
+        const capabilities = await api('/runtime-capabilities');
+        state.runtimeCapabilities = capabilities;
+    } catch (err) {
+        console.error('Failed to load runtime capabilities:', err);
+    }
+    updateRuntimeUi();
 }
 
 // ==================== API HELPERS ====================
@@ -419,15 +481,6 @@ function renderProjects() {
         </div>
     `;
 
-    // Bind click events
-    grid.querySelectorAll('.project-card[data-id]').forEach(card => {
-        card.addEventListener('click', () => loadProject(parseInt(card.dataset.id)));
-    });
-
-    document.getElementById('addProjectCard').addEventListener('click', () => {
-        openModal('newProjectModal');
-    });
-
     hydrateIcons(grid);
 }
 
@@ -577,26 +630,12 @@ function renderKanban() {
         </div>
     `;
 
-    // Bind events
     initDragAndDrop();
-
-    board.querySelectorAll('.kanban-card').forEach(el => {
-        el.addEventListener('click', () => openCardDetail(parseInt(el.dataset.id)));
-    });
-
-    board.querySelectorAll('.add-card-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const column = btn.dataset.column;
-            document.getElementById('newCardColumn').innerHTML =
-                state.currentProject.columns.map(c =>
-                    `<option value="${c}" ${c === column ? 'selected' : ''}>${c}</option>`
-                ).join('');
-            openModal('newCardModal');
-        });
-    });
 
     document.getElementById('libraryWorkspace').classList.toggle('hidden', state.activeProjectView !== 'library');
     board.classList.toggle('hidden', state.activeProjectView !== 'board');
+
+    hydrateIcons(board);
 }
 
 function renderCard(card) {
@@ -857,15 +896,33 @@ async function searchLibrary() {
 function initDragAndDrop() {
     const cards = document.querySelectorAll('.kanban-card');
     const columns = document.querySelectorAll('.column-cards');
+    const dragState = state.dragState;
+
+    if (dragState.rafId) {
+        cancelAnimationFrame(dragState.rafId);
+        dragState.rafId = null;
+    }
+    dragState.activeCard = null;
+    dragState.pendingColumn = null;
+    dragState.lastTarget = null;
 
     cards.forEach(card => {
         card.addEventListener('dragstart', (e) => {
             card.classList.add('dragging');
+            dragState.activeCard = card;
+            dragState.lastTarget = null;
             e.dataTransfer.setData('text/plain', card.dataset.id);
         });
 
         card.addEventListener('dragend', () => {
             card.classList.remove('dragging');
+            dragState.activeCard = null;
+            dragState.pendingColumn = null;
+            dragState.lastTarget = null;
+            if (dragState.rafId) {
+                cancelAnimationFrame(dragState.rafId);
+                dragState.rafId = null;
+            }
         });
     });
 
@@ -873,14 +930,27 @@ function initDragAndDrop() {
         column.addEventListener('dragover', (e) => {
             e.preventDefault();
             column.classList.add('drag-over');
+            dragState.pendingColumn = column;
+            dragState.pendingY = e.clientY;
 
-            const dragging = document.querySelector('.dragging');
-            const afterElement = getDragAfterElement(column, e.clientY);
+            if (!dragState.rafId) {
+                dragState.rafId = requestAnimationFrame(() => {
+                    dragState.rafId = null;
+                    const dragging = dragState.activeCard;
+                    const activeColumn = dragState.pendingColumn;
+                    if (!dragging || !activeColumn) return;
 
-            if (afterElement) {
-                column.insertBefore(dragging, afterElement);
-            } else {
-                column.appendChild(dragging);
+                    const afterElement = getDragAfterElement(activeColumn, dragState.pendingY);
+                    const nextTarget = afterElement || null;
+                    if (dragging.parentElement !== activeColumn || dragState.lastTarget !== nextTarget) {
+                        if (afterElement) {
+                            activeColumn.insertBefore(dragging, afterElement);
+                        } else {
+                            activeColumn.appendChild(dragging);
+                        }
+                        dragState.lastTarget = nextTarget;
+                    }
+                });
             }
         });
 
@@ -926,6 +996,14 @@ function initDragAndDrop() {
             }
         });
     });
+}
+
+function openNewCardModal(column = '') {
+    document.getElementById('newCardColumn').innerHTML =
+        state.currentProject.columns.map(c =>
+            `<option value="${c}" ${c === column ? 'selected' : ''}>${c}</option>`
+        ).join('');
+    openModal('newCardModal');
 }
 
 function getDragAfterElement(container, y) {
@@ -1148,35 +1226,7 @@ function renderAttachments(attachments) {
         </div>
     `).join('');
 
-    // Bind events
-    list.querySelectorAll('.attachment-item').forEach(item => {
-        const attId = parseInt(item.dataset.id);
-        const att = attachments.find(a => a.id === attId);
-
-        item.querySelector('.open-file-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            openFileEditor(att);
-        });
-
-        // OnlyOffice button (only exists for Office file types)
-        const ooBtn = item.querySelector('.onlyoffice-btn');
-        if (ooBtn) {
-            ooBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openOnlyOfficeEditor(att);
-            });
-        }
-
-        item.querySelector('.download-file-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            downloadAttachment(attId);
-        });
-
-        item.querySelector('.delete-file-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            deleteAttachment(attId);
-        });
-    });
+    hydrateIcons(list);
 }
 
 document.getElementById('saveCardBtn').addEventListener('click', async () => {
@@ -1348,7 +1398,7 @@ async function deleteAttachment(attId) {
 // Check if file should use OnlyOffice
 function shouldUseOnlyOffice(fileType) {
     const onlyOfficeTypes = ['word', 'excel', 'powerpoint'];
-    return onlyOfficeTypes.includes(fileType);
+    return onlyOfficeTypes.includes(fileType) && Boolean(state.runtimeCapabilities.onlyoffice?.available);
 }
 
 function buildFileTarget(resource) {
@@ -1466,6 +1516,12 @@ async function loadOnlyOfficeApi(onlyofficeUrl) {
 }
 
 async function openOnlyOfficeEditor(resource) {
+    if (!state.runtimeCapabilities.onlyoffice?.available) {
+        showToast('OnlyOffice 当前不可用，已切换到内置编辑器', 'info');
+        await openBuiltInOfficeEditor(resource);
+        return;
+    }
+
     state.currentAttachment = buildFileTarget(resource);
     document.getElementById('onlyofficeTitle').textContent = state.currentAttachment.original_filename;
     document.getElementById('onlyofficeEditor').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -1496,6 +1552,7 @@ async function openOnlyOfficeEditor(resource) {
         onlyOfficeDocEditor = new DocsAPI.DocEditor('onlyofficeEditor', config);
     } catch (err) {
         closeModal('onlyofficeModal');
+        showToast('OnlyOffice 当前不可用，已切换到内置编辑器', 'info');
         await openBuiltInOfficeEditor(state.currentAttachment);
     }
 }
@@ -1943,7 +2000,11 @@ function mergeChatMessages(messages, replace = false) {
 
 async function loadChatMessages(replace = true) {
     try {
-        const data = await api(`/projects/${state.currentProject.id}/messages`);
+        const latestMessageId = !replace && state.chatMessages.length
+            ? state.chatMessages[state.chatMessages.length - 1].id
+            : null;
+        const query = latestMessageId ? `?after_id=${latestMessageId}` : '';
+        const data = await api(`/projects/${state.currentProject.id}/messages${query}`);
         mergeChatMessages(data.messages, replace);
         updateSyncStatus('ready', '本地轮询已连接');
     } catch (err) {
@@ -2178,9 +2239,67 @@ document.getElementById('saveAiConfigBtn').addEventListener('click', async () =>
             method: 'PUT',
             body: JSON.stringify({ api_base, api_key, model })
         });
+        await loadRuntimeCapabilities();
         showToast('AI配置已保存', 'success');
     } catch (err) {
         showToast(err.message, 'error');
+    }
+});
+
+document.getElementById('projectsGrid').addEventListener('click', (e) => {
+    const projectCard = e.target.closest('.project-card[data-id]');
+    if (projectCard) {
+        loadProject(parseInt(projectCard.dataset.id));
+        return;
+    }
+
+    if (e.target.closest('#addProjectCard')) {
+        openModal('newProjectModal');
+    }
+});
+
+document.getElementById('kanbanBoard').addEventListener('click', (e) => {
+    const addCardBtn = e.target.closest('.add-card-btn');
+    if (addCardBtn) {
+        openNewCardModal(addCardBtn.dataset.column);
+        return;
+    }
+
+    const cardEl = e.target.closest('.kanban-card[data-id]');
+    if (cardEl) {
+        openCardDetail(parseInt(cardEl.dataset.id));
+    }
+});
+
+document.getElementById('attachmentsList').addEventListener('click', (e) => {
+    const item = e.target.closest('.attachment-item[data-id]');
+    if (!item) return;
+
+    const attId = parseInt(item.dataset.id);
+    const attachment = state.currentCard?.attachments?.find(att => att.id === attId);
+    if (!attachment) return;
+
+    if (e.target.closest('.open-file-btn')) {
+        e.stopPropagation();
+        openFileEditor(attachment);
+        return;
+    }
+
+    if (e.target.closest('.onlyoffice-btn')) {
+        e.stopPropagation();
+        openOnlyOfficeEditor(attachment);
+        return;
+    }
+
+    if (e.target.closest('.download-file-btn')) {
+        e.stopPropagation();
+        downloadAttachment(attId);
+        return;
+    }
+
+    if (e.target.closest('.delete-file-btn')) {
+        e.stopPropagation();
+        deleteAttachment(attId);
     }
 });
 
@@ -2450,6 +2569,7 @@ async function init() {
     initFontSizeSettings();
     initSettingsMenu();
     initDashboardSearch();
+    await loadRuntimeCapabilities();
     updateSyncStatus('ready', '本地模式');
 
     if (state.token) {
@@ -2645,6 +2765,12 @@ async function openChatFile(filename, type) {
 }
 
 async function openChatFileOnlyOffice(filename) {
+    if (!state.runtimeCapabilities.onlyoffice?.available) {
+        showToast('OnlyOffice 当前不可用，已改为下载文件', 'info');
+        window.open(`${API_BASE}/chat/files/${filename}`, '_blank');
+        return;
+    }
+
     try {
         const versionBtn = document.getElementById('saveVersionBtn');
         const historyBtn = document.getElementById('versionHistoryBtn');

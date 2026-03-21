@@ -11,12 +11,14 @@ class Config:
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY') or ''
     OPENAI_API_BASE = os.environ.get('OPENAI_API_BASE') or ''
     OPENAI_MODEL = os.environ.get('OPENAI_MODEL') or 'gpt-3.5-turbo'
+    OFFLINE_AI_FALLBACK = os.environ.get('OFFLINE_AI_FALLBACK', 'true').lower() == 'true'
     
     # OnlyOffice Document Server settings
     ONLYOFFICE_URL = os.environ.get('ONLYOFFICE_URL') or 'http://localhost:8080'
     ONLYOFFICE_JWT_SECRET = os.environ.get('ONLYOFFICE_JWT_SECRET') or 'teamwork-onlyoffice-secret-key'
     # Internal URL for OnlyOffice to access Flask (Docker bridge IP or host.docker.internal)
     INTERNAL_URL = os.environ.get('INTERNAL_URL') or 'http://172.17.0.1:5000'
+    ONLYOFFICE_HEALTHCHECK_TIMEOUT = float(os.environ.get('ONLYOFFICE_HEALTHCHECK_TIMEOUT') or 1.5)
     
     # SQLAlchemy connection pool settings for concurrent access
     SQLALCHEMY_ENGINE_OPTIONS = {

@@ -7,6 +7,7 @@ import jwt as pyjwt
 import requests
 from datetime import datetime
 from functools import wraps
+from urllib.parse import urlparse
 
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -34,7 +35,7 @@ os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'library'), exist_ok=True)
 db.init_app(app)
 jwt = JWTManager(app)
 Compress(app)  # Gzip compression for all responses
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Create tables and configure SQLite performance
 with app.app_context():
@@ -86,6 +87,179 @@ def create_openai_client():
     if api_base:
         client_kwargs['base_url'] = api_base
     return OpenAI(**client_kwargs)
+
+def get_onlyoffice_healthcheck_url():
+    onlyoffice_url = (app.config.get('ONLYOFFICE_URL') or '').rstrip('/')
+    if not onlyoffice_url:
+        return ''
+    parsed = urlparse(onlyoffice_url)
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+        return ''
+    return f"{onlyoffice_url}/healthcheck"
+
+def is_onlyoffice_available():
+    healthcheck_url = get_onlyoffice_healthcheck_url()
+    if not healthcheck_url:
+        return False
+
+    try:
+        response = requests.get(
+            healthcheck_url,
+            timeout=app.config.get('ONLYOFFICE_HEALTHCHECK_TIMEOUT', 1.5)
+        )
+        return response.ok and 'true' in response.text.lower()
+    except Exception:
+        return False
+
+def build_local_ai_answer(project, cards, question):
+    question_text = (question or '').strip()
+    lowered = question_text.lower()
+    total = len(cards)
+    completed = sum(1 for card in cards if card.completed)
+    pending = total - completed
+    overdue_cards = [card for card in cards if card.due_date and card.due_date < datetime.utcnow() and not card.completed]
+
+    columns = {}
+    for card in cards:
+        columns.setdefault(card.column or '未分类', []).append(card)
+
+    if any(keyword in lowered for keyword in ['统计', '概况', '概览', '总结', 'summary', 'overview']):
+        lines = [
+            f"# {project.name} 项目概况",
+            '',
+            f"- 卡片总数: {total}",
+            f"- 已完成: {completed}",
+            f"- 未完成: {pending}",
+            f"- 已逾期: {len(overdue_cards)}",
+            ''
+        ]
+        for column_name, column_cards in columns.items():
+            lines.append(f"## {column_name}")
+            lines.append(f"- 数量: {len(column_cards)}")
+        return '\n'.join(lines)
+
+    status_filtered = cards
+    if any(keyword in lowered for keyword in ['未完成', '待办', 'pending', 'todo']):
+        status_filtered = [card for card in cards if not card.completed]
+    elif any(keyword in lowered for keyword in ['完成', '已完成', 'done', 'completed']):
+        status_filtered = [card for card in cards if card.completed]
+
+    terms = [term for term in question_text.replace('？', ' ').replace('?', ' ').split() if term]
+    if not terms:
+        terms = [question_text] if question_text else []
+
+    ranked = []
+    for card in status_filtered:
+        haystack = ' '.join([
+            card.title or '',
+            card.content or '',
+            card.column or '',
+            ' '.join(user.username for user in card.assignees),
+            ' '.join(category.name for category in card.categories)
+        ]).lower()
+        score = sum(1 for term in terms if term.lower() in haystack)
+        if score:
+            ranked.append((score, card))
+
+    ranked.sort(key=lambda item: (-item[0], item[1].position, item[1].id))
+    top_cards = [card for _, card in ranked[:5]]
+
+    if not top_cards:
+        top_cards = sorted(
+            status_filtered,
+            key=lambda card: (
+                card.completed,
+                card.due_date or datetime.max,
+                card.position,
+                card.id
+            )
+        )[:5]
+
+    lines = [
+        f"# 关于“{question_text}”的本地分析",
+        '',
+        f"- 项目: {project.name}",
+        f"- 当前卡片总数: {total}",
+        f"- 已完成 / 未完成: {completed} / {pending}",
+        ''
+    ]
+
+    if overdue_cards:
+        lines.append("## 需要优先关注")
+        for card in overdue_cards[:3]:
+            lines.append(f"- [{card.column}] {card.title}：已逾期")
+        lines.append('')
+
+    lines.append("## 相关卡片")
+    for card in top_cards:
+        summary = (card.content or '').strip().replace('\n', ' ')
+        if len(summary) > 120:
+            summary = summary[:120] + '...'
+        assignees = ', '.join(user.username for user in card.assignees) or '未分配'
+        lines.append(
+            f"- [{card.column}] {card.title} | 负责人: {assignees} | 状态: {'已完成' if card.completed else '进行中'}"
+        )
+        if summary:
+            lines.append(f"  摘要: {summary}")
+
+    lines.append('')
+    lines.append("## 说明")
+    lines.append("- 当前回答由本地规则生成，适用于离线单机场景。")
+    lines.append("- 如需更强语义理解，可把 AI 配置指向本地 OpenAI 兼容模型服务。")
+    return '\n'.join(lines)
+
+def build_local_ai_summary(cards):
+    lines = [
+        '# 卡片汇总',
+        '',
+        f'- 选中卡片数: {len(cards)}',
+        ''
+    ]
+
+    grouped = {}
+    for card in cards:
+        grouped.setdefault(card.column or '未分类', []).append(card)
+
+    for column_name, column_cards in grouped.items():
+        lines.append(f'## {column_name}')
+        for card in column_cards:
+            lines.append(f"### {card.title}")
+            lines.append(f"- 状态: {'已完成' if card.completed else '未完成'}")
+            if card.due_date:
+                lines.append(f"- 截止时间: {card.due_date.strftime('%Y-%m-%d %H:%M')}")
+            assignees = ', '.join(user.username for user in card.assignees)
+            if assignees:
+                lines.append(f"- 负责人: {assignees}")
+            categories = ', '.join(category.name for category in card.categories)
+            if categories:
+                lines.append(f"- 类别: {categories}")
+            content = (card.content or '').strip()
+            lines.append(f"- 内容摘要: {(content[:300] + '...') if len(content) > 300 else (content or '无')}")
+            lines.append('')
+
+    lines.append('## 说明')
+    lines.append('- 当前总结由本地规则生成，保证离线环境可用。')
+    return '\n'.join(lines)
+
+def build_runtime_capabilities():
+    onlyoffice_available = is_onlyoffice_available()
+    openai_api_base = (app.config.get('OPENAI_API_BASE') or '').strip()
+    openai_api_key = (app.config.get('OPENAI_API_KEY') or '').strip()
+    ai_external_ready = bool(openai_api_base and openai_api_key)
+    return {
+        'offline_mode': True,
+        'onlyoffice': {
+            'configured_url': app.config.get('ONLYOFFICE_URL', ''),
+            'available': onlyoffice_available
+        },
+        'ai': {
+            'mode': 'external' if ai_external_ready else 'local',
+            'external_ready': ai_external_ready,
+            'fallback_enabled': bool(app.config.get('OFFLINE_AI_FALLBACK', True)),
+            'api_base': openai_api_base,
+            'model': app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo')
+        }
+    }
 
 def extract_file_content(file_path, file_type, max_content_length=50000):
     """Extract text content from a file for full-text search.
@@ -337,7 +511,10 @@ def get_projects():
     user = User.query.get(user_id)
     
     # Get projects where user is owner or member
-    projects = Project.query.filter(
+    projects = Project.query.options(
+        joinedload(Project.owner),
+        subqueryload(Project.members)
+    ).filter(
         (Project.owner_id == user_id) | (Project.members.contains(user))
     ).order_by(Project.updated_at.desc()).all()
     
@@ -480,13 +657,27 @@ def create_project():
 @jwt_required()
 def get_project(project_id):
     user_id = int(get_jwt_identity())
-    project = Project.query.get_or_404(project_id)
+    project = Project.query.options(
+        joinedload(Project.owner),
+        subqueryload(Project.members)
+    ).get_or_404(project_id)
     
     # Check if user has access
     if not any(m.id == user_id for m in project.members):
         return jsonify({'error': '无权访问此项目'}), 403
     
-    return jsonify(project.to_dict(include_cards=True))
+    cards = Card.query.filter_by(project_id=project_id).options(
+        subqueryload(Card.assignees),
+        subqueryload(Card.categories),
+        subqueryload(Card.attachments)
+    ).order_by(Card.position.asc()).all()
+    categories = Category.query.filter_by(project_id=project_id).all()
+
+    project_data = project.to_dict()
+    project_data['cards'] = [card.to_dict() for card in cards]
+    project_data['categories'] = [category.to_dict() for category in categories]
+
+    return jsonify(project_data)
 
 @app.route('/api/projects/<int:project_id>', methods=['PUT'])
 @jwt_required()
@@ -1384,6 +1575,9 @@ def get_onlyoffice_config(attachment_id):
     
     if not any(m.id == user_id for m in project.members):
         return jsonify({'error': '无权访问此附件'}), 403
+
+    if not is_onlyoffice_available():
+        return jsonify({'error': 'OnlyOffice 服务当前不可用，请使用内置编辑器'}), 503
     
     # Build file URL that OnlyOffice can access from Docker container
     # Use INTERNAL_URL config for Docker bridge access (not localhost which Docker can't reach)
@@ -1413,6 +1607,9 @@ def get_library_document_onlyoffice_config(document_id):
 
     if not user_can_access_project(document.project, user_id):
         return jsonify({'error': '无权访问此文件'}), 403
+
+    if not is_onlyoffice_available():
+        return jsonify({'error': 'OnlyOffice 服务当前不可用，请使用内置编辑器'}), 503
 
     internal_url = app.config.get('INTERNAL_URL', 'http://172.17.0.1:5000').rstrip('/')
     file_url = f"{internal_url}/api/library/documents/{document_id}/download"
@@ -1752,26 +1949,29 @@ def ai_ask(project_id):
     for card in cards:
         context += f"- [{card.column}] {card.title}: {card.content[:500]}\n"
     
-    api_key = app.config.get('OPENAI_API_KEY')
-    if not api_key:
-        return jsonify({'error': '请配置OpenAI API密钥'}), 400
+    api_key = (app.config.get('OPENAI_API_KEY') or '').strip()
+    api_base = (app.config.get('OPENAI_API_BASE') or '').strip()
+    use_external_ai = bool(api_key and api_base)
     
     try:
-        client = create_openai_client()
-        
-        response = client.chat.completions.create(
-            model=app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
-            messages=[
-                {"role": "system", "content": f"你是一个项目助手。根据以下项目信息回答用户的问题:\n\n{context}"},
-                {"role": "user", "content": question}
-            ],
-            max_tokens=1000
-        )
-        
-        answer = response.choices[0].message.content
+        if use_external_ai:
+            client = create_openai_client()
+            response = client.chat.completions.create(
+                model=app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
+                messages=[
+                    {"role": "system", "content": f"你是一个项目助手。根据以下项目信息回答用户的问题:\n\n{context}"},
+                    {"role": "user", "content": question}
+                ],
+                max_tokens=1000
+            )
+            answer = response.choices[0].message.content
+        else:
+            answer = build_local_ai_answer(project, cards, question)
         return jsonify({'answer': answer})
     
     except Exception as e:
+        if app.config.get('OFFLINE_AI_FALLBACK', True):
+            return jsonify({'answer': build_local_ai_answer(project, cards, question)})
         return jsonify({'error': f'AI请求失败: {str(e)}'}), 500
 
 @app.route('/api/projects/<int:project_id>/ai/summarize', methods=['POST'])
@@ -1796,26 +1996,29 @@ def ai_summarize(project_id):
     
     content = "\n\n".join([f"## {card.title}\n{card.content}" for card in cards])
     
-    api_key = app.config.get('OPENAI_API_KEY')
-    if not api_key:
-        return jsonify({'error': '请配置OpenAI API密钥'}), 400
+    api_key = (app.config.get('OPENAI_API_KEY') or '').strip()
+    api_base = (app.config.get('OPENAI_API_BASE') or '').strip()
+    use_external_ai = bool(api_key and api_base)
     
     try:
-        client = create_openai_client()
-        
-        response = client.chat.completions.create(
-            model=app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
-            messages=[
-                {"role": "system", "content": "请将以下内容总结成一份文档，保持结构清晰、内容完整。"},
-                {"role": "user", "content": content}
-            ],
-            max_tokens=2000
-        )
-        
-        summary = response.choices[0].message.content
+        if use_external_ai:
+            client = create_openai_client()
+            response = client.chat.completions.create(
+                model=app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
+                messages=[
+                    {"role": "system", "content": "请将以下内容总结成一份文档，保持结构清晰、内容完整。"},
+                    {"role": "user", "content": content}
+                ],
+                max_tokens=2000
+            )
+            summary = response.choices[0].message.content
+        else:
+            summary = build_local_ai_summary(cards)
         return jsonify({'summary': summary})
     
     except Exception as e:
+        if app.config.get('OFFLINE_AI_FALLBACK', True):
+            return jsonify({'summary': build_local_ai_summary(cards)})
         return jsonify({'error': f'AI请求失败: {str(e)}'}), 500
 
 @app.route('/api/ai/config', methods=['PUT'])
@@ -1823,14 +2026,18 @@ def ai_summarize(project_id):
 def update_ai_config():
     data = request.get_json()
     
-    if data.get('api_base'):
-        app.config['OPENAI_API_BASE'] = data['api_base']
-    if data.get('api_key'):
-        app.config['OPENAI_API_KEY'] = data['api_key']
-    if data.get('model'):
-        app.config['OPENAI_MODEL'] = data['model']
+    if 'api_base' in data:
+        app.config['OPENAI_API_BASE'] = (data.get('api_base') or '').strip()
+    if 'api_key' in data:
+        app.config['OPENAI_API_KEY'] = (data.get('api_key') or '').strip()
+    if 'model' in data:
+        app.config['OPENAI_MODEL'] = (data.get('model') or 'gpt-3.5-turbo').strip()
     
     return jsonify({'message': 'AI配置已更新'})
+
+@app.route('/api/runtime-capabilities', methods=['GET'])
+def get_runtime_capabilities():
+    return jsonify(build_runtime_capabilities())
 
 # ================== CHAT ROUTES ==================
 
@@ -1846,10 +2053,22 @@ def get_messages(project_id):
     # Pagination
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
-    
-    messages = ChatMessage.query.filter_by(project_id=project_id)\
-        .options(joinedload(ChatMessage.author))\
-        .order_by(ChatMessage.created_at.desc())\
+    after_id = request.args.get('after_id', type=int)
+    message_query = ChatMessage.query.filter_by(project_id=project_id)\
+        .options(joinedload(ChatMessage.author))
+
+    if after_id:
+        messages = message_query.filter(ChatMessage.id > after_id)\
+            .order_by(ChatMessage.created_at.asc())\
+            .all()
+
+        return jsonify({
+            'messages': [m.to_dict() for m in messages],
+            'has_more': False,
+            'total': len(messages)
+        })
+
+    messages = message_query.order_by(ChatMessage.created_at.desc())\
         .paginate(page=page, per_page=per_page, error_out=False)
     
     return jsonify({
@@ -1980,6 +2199,9 @@ def get_chat_file_content(filename):
 @app.route('/api/chat/files/<filename>/onlyoffice-config', methods=['GET'])
 @jwt_required()
 def get_chat_file_onlyoffice_config(filename):
+    if not is_onlyoffice_available():
+        return jsonify({'error': 'OnlyOffice 服务当前不可用，请使用下载或轻量预览'}), 503
+
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'chat', filename)
     if not os.path.exists(file_path):
         return jsonify({'error': '文件不存在'}), 404
@@ -2112,7 +2334,8 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'service': 'teamwork'
+        'service': 'teamwork',
+        'capabilities': build_runtime_capabilities()
     }), 200
 
 @app.route('/ready')
@@ -2134,7 +2357,8 @@ def readiness_check():
     return jsonify({
         'status': 'ready',
         'database': db_status,
-        'timestamp': datetime.utcnow().isoformat()
+        'timestamp': datetime.utcnow().isoformat(),
+        'capabilities': build_runtime_capabilities()
     }), 200
 
 # ================== MAIN PAGE ==================
@@ -2144,4 +2368,4 @@ def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=app.config.get('DEBUG', False), host='0.0.0.0', port=5000)
